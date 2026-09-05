@@ -1,0 +1,22 @@
+# Local disposable Postgres for running the test suite (and dev server) without
+# touching Neon. `docker compose up -d db` then `pytest`.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ascend
+      POSTGRES_PASSWORD: ascend
+      POSTGRES_DB: ascend
+    ports:
+      - "5432:5432"
+    volumes:
+      - ascend_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ascend"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ascend_pgdata:

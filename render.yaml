@@ -1,0 +1,38 @@
+# Render free web service. Deploy order:
+# 1. Neon Postgres project already exists (lively-cell-80315368 / branch
+#    production) — DATABASE_URL comes from its DIRECT (unpooled) connection
+#    string, set as a Render env var below (sync: false = set by hand in
+#    the dashboard, never committed here).
+# 2. buildCommand installs deps, collects static (WhiteNoise serves them —
+#    no separate static host needed), and runs migrations (including the
+#    0002_seed_program data migration).
+# 3. See docs/SETUP.md for the full first-deploy walkthrough and the
+#    cron-job.org keep-warm step (Render free instances sleep after 15 min
+#    idle; GET /api/health/ every 10 minutes keeps this one warm).
+services:
+  - type: web
+    name: ascend-backend
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate"
+    startCommand: "gunicorn ascend.wsgi:application"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com"
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: TIME_ZONE
+        value: "Asia/Kolkata"
+      - key: INGEST_TOKEN
+        sync: false
+      - key: INGEST_OWNER_USERNAME
+        sync: false
