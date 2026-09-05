@@ -4,9 +4,13 @@
 #    string, set as a Render env var below (sync: false = set by hand in
 #    the dashboard, never committed here).
 # 2. buildCommand installs deps, collects static (WhiteNoise serves them —
-#    no separate static host needed), and runs migrations (including the
-#    0002_seed_program data migration).
-# 3. See docs/SETUP.md for the full first-deploy walkthrough and the
+#    no separate static host needed), runs migrations (including the
+#    0002_seed_program data migration), then bootstraps your superuser.
+# 3. Render's free plan has no Shell/SSH/Jobs access (paid-only now), so
+#    the superuser is created from DJANGO_SUPERUSER_* env vars you set
+#    yourself in the dashboard — see docs/SETUP.md. It's a safe no-op on
+#    every redeploy once that superuser exists.
+# 4. See docs/SETUP.md for the full first-deploy walkthrough and the
 #    cron-job.org keep-warm step (Render free instances sleep after 15 min
 #    idle; GET /api/health/ every 10 minutes keeps this one warm).
 services:
@@ -15,7 +19,7 @@ services:
     runtime: python
     plan: free
     region: singapore
-    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate"
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && python manage.py bootstrap_superuser"
     startCommand: "gunicorn ascend.wsgi:application"
     envVars:
       - key: PYTHON_VERSION
@@ -35,4 +39,12 @@ services:
       - key: INGEST_TOKEN
         sync: false
       - key: INGEST_OWNER_USERNAME
+        sync: false
+      # Set these three yourself in the dashboard (never committed here) —
+      # bootstrap_superuser reads them once, then no-ops forever after.
+      - key: DJANGO_SUPERUSER_USERNAME
+        sync: false
+      - key: DJANGO_SUPERUSER_EMAIL
+        sync: false
+      - key: DJANGO_SUPERUSER_PASSWORD
         sync: false

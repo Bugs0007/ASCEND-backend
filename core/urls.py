@@ -1,9 +1,16 @@
 from django.urls import path
+from rest_framework.authtoken.views import obtain_auth_token
 
 from core import views
 
 urlpatterns = [
     path("health/", views.HealthView.as_view(), name="health"),
+    # DRF's built-in view: POST {"username","password"} -> {"token": "..."}.
+    # Render's free plan dropped Shell/SSH access (paid-only now), so this
+    # is how you mint your own token — see docs/SETUP.md. It only ever
+    # takes credentials you enter yourself; nothing here reads or stores
+    # your password beyond Django's own auth check.
+    path("auth/token/", obtain_auth_token, name="auth-token"),
     path("ingest/", views.IngestView.as_view(), name="ingest"),
     path("ingest/sleep/", views.IngestSleepView.as_view(), name="ingest-sleep"),
     path("today/", views.TodayView.as_view(), name="today"),

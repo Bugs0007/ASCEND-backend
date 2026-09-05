@@ -73,6 +73,7 @@ is a Postgres `ArrayField` — SQLite can't run the migrations.
 | Endpoint | Auth | Purpose |
 |---|---|---|
 | `GET /api/health/` | none | DB-touching health check for keep-warm |
+| `POST /api/auth/token/` | username+password | Mint your DRF token (Render free plan has no Shell — see docs/SETUP.md) |
 | `POST /api/ingest/` | machine token | Batch upsert across 11 resource types |
 | `POST /api/ingest/sleep/` | machine token | Tiny endpoint for iPhone Shortcuts |
 | `GET /api/today/` | either | Today's blocks, streak, milestones, decay, countdowns |

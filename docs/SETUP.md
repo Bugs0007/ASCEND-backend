@@ -59,25 +59,33 @@ If you're starting completely fresh instead:
 
 ## 4. Create your superuser
 
-Render dashboard → your service → **Shell** tab:
+Render's free plan has no Shell/SSH/Jobs access (that moved behind the
+paid Starter plan), so `manage.py createsuperuser` can't be run
+interactively there. Instead:
 
-```bash
-python manage.py createsuperuser
-```
-
-Pick any username/email/password — this is the one human account. Then,
-in the same shell, mint your API token for the frontend and for curl
-testing:
-
-```bash
-python manage.py shell -c "
-from django.contrib.auth import get_user_model
-from rest_framework.authtoken.models import Token
-user = get_user_model().objects.get(is_superuser=True)
-token, _ = Token.objects.get_or_create(user=user)
-print(token.key)
-"
-```
+1. Render dashboard → your service → **Environment** tab → add three
+   variables (pick your own username/email/password — this is the one
+   human account, and nothing in this codebase ever sees the password
+   value beyond Django's own auth check):
+   ```
+   DJANGO_SUPERUSER_USERNAME=<your choice>
+   DJANGO_SUPERUSER_EMAIL=<your choice>
+   DJANGO_SUPERUSER_PASSWORD=<your choice>
+   ```
+2. **Save, Deploy** (or just wait for the redeploy Render triggers on
+   saving env vars). The build command's last step,
+   `manage.py bootstrap_superuser`, reads those three and creates exactly
+   one superuser, then quietly no-ops on every deploy after — see
+   [`core/management/commands/bootstrap_superuser.py`](../core/management/commands/bootstrap_superuser.py).
+3. Mint your API token — `POST /api/auth/token/` with your own
+   username/password (DRF's built-in `obtain_auth_token` view; this is
+   the one place a password is entered, and it's yours, into your own
+   deployment, once):
+   ```bash
+   curl -X POST https://<your-service>.onrender.com/api/auth/token/ \
+     -d "username=<your-username>&password=<your-password>"
+   ```
+   Response: `{"token": "..."}`.
 
 Save that token somewhere — it's your `Authorization: Token <key>` header
 for `/api/analytics/*` and the block-tap endpoints. It is a **different**
