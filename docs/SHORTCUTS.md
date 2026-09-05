@@ -66,5 +66,5 @@ or query the row directly via `/admin/` (Django admin, your own login) —
 once both `bed_at` and `wake_at` are set:
 
 ```json
-{ "log_date": "2026-09-07", "created": false, "bed_at": "...", "wake_at": "...", "hours": "6.22" }
+{ "log_date": "2026-09-07", "created": false, "bed_at": "...", "wake_at": "...", "hours": 6.22 }
 ```

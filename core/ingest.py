@@ -270,10 +270,13 @@ def _upsert_milestone(data, owner):
         except Milestone.DoesNotExist:
             raise DRFValidationError({"id": f"No milestone with id {milestone_id}."})
         created = False
-    elif project is not None:
-        obj, created = _get_or_new(Milestone, {"project": project, "title": data["title"]}, owner)
     else:
-        existing = Milestone.objects.filter(project__isnull=True, title=data["title"]).first()
+        # Looked up by title alone, regardless of its current project —
+        # project_code only ever *sets* the project below, it never
+        # narrows the lookup. Matching on (project, title) instead would
+        # miss an existing row whenever an update omits project_code,
+        # creating a spurious duplicate instead of updating it.
+        existing = Milestone.objects.filter(title=data["title"]).first()
         obj, created = (existing, False) if existing else (Milestone(owner=owner), True)
 
     _apply_fields(obj, data)

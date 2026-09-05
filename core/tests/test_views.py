@@ -130,13 +130,16 @@ class TestIngestEndToEnd:
         assert resp.status_code == 400
 
     def test_sleep_shortcut_endpoint(self, ingest_client):
+        import datetime
+
         resp = ingest_client.post(
             "/api/ingest/sleep/",
-            {"event": "bed", "at": "2026-09-05T00:47:00Z"},
+            {"event": "bed", "at": "2026-09-05T00:47:00+05:30"},  # IST, before the noon cutoff
             format="json",
         )
         assert resp.status_code == 200
-        assert resp.data["log_date"] == "2026-09-04"
+        # resp.data holds native Python objects (pre-render) — a date, not a string.
+        assert resp.data["log_date"] == datetime.date(2026, 9, 4)
 
 
 class TestEmailQueue:

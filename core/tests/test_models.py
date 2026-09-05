@@ -68,7 +68,10 @@ class TestSleepLogDerivation:
         bed = datetime.datetime(2026, 9, 6, 23, 30, tzinfo=datetime.timezone.utc)
         wake = datetime.datetime(2026, 9, 7, 6, 30, tzinfo=datetime.timezone.utc)
         log = SleepLog.objects.create(log_date=DAY0, bed_at=bed, wake_at=wake)
-        assert log.hours == pytest.approx(7.0)
+        # hours is a Decimal — compare as float rather than relying on
+        # pytest.approx's fast-path exact-equality short-circuit, which
+        # only happens to work here because 7.0 has no fractional part.
+        assert float(log.hours) == pytest.approx(7.0)
 
     def test_hours_null_when_one_missing(self):
         bed = datetime.datetime(2026, 9, 6, 23, 30, tzinfo=datetime.timezone.utc)

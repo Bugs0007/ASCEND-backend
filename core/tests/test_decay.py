@@ -12,6 +12,11 @@ pytestmark = pytest.mark.django_db
 AS_OF = datetime.date(2026, 10, 1)
 
 
+def _aware(date_obj):
+    """updated_at is a DateTimeField — give it an aware datetime, not a bare date."""
+    return datetime.datetime.combine(date_obj, datetime.time.min, tzinfo=datetime.timezone.utc)
+
+
 class TestDecay:
     def test_decay_days_constant_is_14(self):
         assert DECAY_DAYS == 14
@@ -59,7 +64,7 @@ class TestDecay:
 
     def test_project_flagged_via_updated_at(self):
         project = Project.objects.get(code="A")
-        stale = AS_OF - datetime.timedelta(days=DECAY_DAYS + 5)
+        stale = _aware(AS_OF - datetime.timedelta(days=DECAY_DAYS + 5))
         # Force both the project and its milestones' updated_at deterministically
         # (bypassing auto_now, since QuerySet.update() doesn't trigger it) so
         # this test doesn't depend on the wall-clock moment migrations ran.
@@ -72,11 +77,11 @@ class TestDecay:
     def test_project_not_flagged_with_recent_milestone_activity(self):
         project = Project.objects.get(code="A")
         Project.objects.filter(pk=project.pk).update(
-            updated_at=AS_OF - datetime.timedelta(days=DECAY_DAYS + 5)
+            updated_at=_aware(AS_OF - datetime.timedelta(days=DECAY_DAYS + 5))
         )
         # A milestone touched yesterday keeps the project off the decay list
         # even though the project row itself is stale.
-        project.milestones.update(updated_at=AS_OF - datetime.timedelta(days=1))
+        project.milestones.update(updated_at=_aware(AS_OF - datetime.timedelta(days=1)))
         result = decay.compute(as_of=AS_OF)
         codes = [p["code"] for p in result["projects"]]
         assert "A" not in codes

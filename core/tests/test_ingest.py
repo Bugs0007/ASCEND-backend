@@ -123,33 +123,36 @@ class TestMilestoneEvidenceGateViaIngest:
         assert m.project.code == "A"
 
 
+IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+
 class TestSleepDayAttribution:
     def test_bed_after_midnight_attributes_to_previous_day(self):
-        # 00:47 local time on Sept 5 -> attributed to Sept 4's SleepLog.
-        at = datetime.datetime(2026, 9, 5, 0, 47, tzinfo=datetime.timezone.utc)
+        # 00:47 IST (the app's configured TIME_ZONE) on Sept 5 -> Sept 4's SleepLog.
+        at = datetime.datetime(2026, 9, 5, 0, 47, tzinfo=IST)
         log_date = resolve_sleep_log_date(at)
         assert log_date == datetime.date(2026, 9, 4)
 
     def test_bed_before_midnight_attributes_to_same_day(self):
-        # 23:40 local time on Sept 4 -> stays Sept 4.
-        at = datetime.datetime(2026, 9, 4, 23, 40, tzinfo=datetime.timezone.utc)
+        # 23:40 IST on Sept 4 -> stays Sept 4.
+        at = datetime.datetime(2026, 9, 4, 23, 40, tzinfo=IST)
         log_date = resolve_sleep_log_date(at)
         assert log_date == datetime.date(2026, 9, 4)
 
     def test_morning_wake_matches_the_bed_events_log_date(self):
-        bed_at = datetime.datetime(2026, 9, 5, 0, 47, tzinfo=datetime.timezone.utc)
-        wake_at = datetime.datetime(2026, 9, 5, 7, 0, tzinfo=datetime.timezone.utc)
+        bed_at = datetime.datetime(2026, 9, 5, 0, 47, tzinfo=IST)
+        wake_at = datetime.datetime(2026, 9, 5, 7, 0, tzinfo=IST)
         assert resolve_sleep_log_date(bed_at) == resolve_sleep_log_date(wake_at) == datetime.date(2026, 9, 4)
 
     def test_full_bed_then_wake_event_flow(self, owner):
-        bed_at = datetime.datetime(2026, 9, 5, 0, 47, tzinfo=datetime.timezone.utc)
-        wake_at = datetime.datetime(2026, 9, 5, 7, 0, tzinfo=datetime.timezone.utc)
+        bed_at = datetime.datetime(2026, 9, 5, 0, 47, tzinfo=IST)
+        wake_at = datetime.datetime(2026, 9, 5, 7, 0, tzinfo=IST)
         run_sleep_event_ingest("bed", bed_at, owner)
         obj, created = run_sleep_event_ingest("wake", wake_at, owner)
         assert not created  # same row as the bed event
         assert obj.log_date == datetime.date(2026, 9, 4)
         assert obj.source == SleepLog.Source.SHORTCUT
-        assert obj.hours == pytest.approx(6.22, abs=0.01)
+        assert float(obj.hours) == pytest.approx(6.22, abs=0.01)
 
 
 class TestEmailAutoMatch:

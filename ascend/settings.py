@@ -97,6 +97,13 @@ DATABASES = {
 # because it's simply unnecessary for this traffic volume.
 DATABASES["default"].setdefault("OPTIONS", {})
 DATABASES["default"]["OPTIONS"]["prepare_threshold"] = None
+# Neon's serverless computes suspend after a period of idle and take a
+# noticeable few seconds to cold-start on the next connection (observed
+# ~15-20s against a suspended branch) — psycopg3's own default connect
+# timeout is otherwise short enough to fail during exactly that window.
+# This can stack with Render's own free-tier cold start, so it's worth
+# tolerating here rather than surfacing as a flaky 500.
+DATABASES["default"]["OPTIONS"]["connect_timeout"] = 30
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

@@ -16,6 +16,8 @@ UI:
   * "Shippable" queues exclude anything gated by a project        -> *.shippable() managers
   * The 21-day ghost rule is computed, never written to `stage`   -> Application.is_ghosted()
 """
+from decimal import Decimal
+
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
@@ -172,7 +174,13 @@ class SleepLog(BaseModel):
 
     def save(self, *args, **kwargs):
         if self.bed_at and self.wake_at:
-            self.hours = round((self.wake_at - self.bed_at).total_seconds() / 3600, 2)
+            # Route through str() before Decimal(): DecimalField's own
+            # to_python() converts a bare float via Context.create_decimal_
+            # from_float(), which preserves the float's exact binary value
+            # (e.g. 6.22 -> Decimal('6.2199999999999997...')) and fails the
+            # decimal_places=2 validator on almost any non-round duration.
+            hours = round((self.wake_at - self.bed_at).total_seconds() / 3600, 2)
+            self.hours = Decimal(str(hours))
         self.full_clean()
         super().save(*args, **kwargs)
 

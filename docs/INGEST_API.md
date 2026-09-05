@@ -57,7 +57,7 @@ The response is a per-resource created/updated tally:
 | `reflections` | `log_date` | Extension beyond the spec's four, same spirit — one reflection per day. |
 | `loss_postmortems` | `(application, round_reached)` | Resolved via `application_company`/`application_role`. |
 | `content_posts` | `url` when given | Falls back to `id`-based update, else always creates. |
-| `milestones` | `(project, title)` or `(title)` if no project | `id` takes priority when given (see below). |
+| `milestones` | `title` | `id` takes priority when given (see below). `project_code`/`phase_no` only ever *set* the project/phase — they never narrow the lookup, so omitting them on an update can't detach an existing link. |
 | `study_sessions` | none | Always creates unless `id` is given. |
 | `activity_samples` | none | Append-only; nothing writes here in v1. |
 
