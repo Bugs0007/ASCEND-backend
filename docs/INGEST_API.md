@@ -271,3 +271,62 @@ or your own user token.
 ```bash
 curl "$BASE/api/email-queue/" -H "Authorization: Bearer $INGEST_TOKEN"
 ```
+
+---
+
+## Read endpoints (your own user token only)
+
+Everything below is **your login token** (`Authorization: Token <key>`),
+never `INGEST_TOKEN` — these are for a frontend/dashboard reading your own
+data, not the machine ingest path.
+
+| Endpoint | Filters | Ordering |
+|---|---|---|
+| `GET /api/applications/` | `?stage=`, `?source=` | `last_update` (default, newest first), `applied_on`, `company` |
+| `GET /api/milestones/` | `?status=`, `?project=` (project **code**, e.g. `A`) | `due_date` (default), `title` |
+| `GET /api/sleep-logs/` | `?log_date__gte=`, `?log_date__lte=` | `log_date` (default, newest first) |
+| `GET /api/daily-logs/` | `?log_date__gte=`, `?log_date__lte=` | `log_date` (default, newest first) |
+| `GET /api/skills/` | — | `name`, `level` |
+| `GET /api/courses/` | — | `name`, `progress_pct` |
+| `GET /api/cert-domains/` | — | `domain_no`, `mastery_pct` |
+| `GET /api/content-posts/` | — | `posted_on` (default, newest first) |
+| `GET /api/reflections/` | `?log_date__gte=`, `?log_date__lte=` | `log_date` (default, newest first) |
+| `GET /api/notion-tasks/` | `?status=` | `due_date`, `notion_last_edited` |
+
+Every list is paginated (`{"count", "next", "previous", "results"}`, 50 per
+page) and scoped to you — a row someone else owns, or that has no owner at
+all (shared program scaffolding), is included; another user's row never
+shows up. Sort ascending/descending with `?ordering=field` /
+`?ordering=-field`.
+
+```bash
+curl "$BASE/api/applications/?stage=offer" -H "Authorization: Token $USER_TOKEN"
+curl "$BASE/api/daily-logs/?log_date__gte=2026-09-01&log_date__lte=2026-09-30" \
+  -H "Authorization: Token $USER_TOKEN"
+```
+
+**`PATCH /api/countdowns/<id>/`** — `{"target_date": "2026-11-15"}` (or
+`null` to go back to TBD). Rejected with `400` if that countdown's
+`editable` flag is `false` (the program-end date, for one, is fixed).
+
+**`PATCH /api/block-entries/<id>/`** — undo a completion. Empty body
+(`{}`); any other key is a 400. Sets `completed` back to `false` and clears
+`ended_at`/`elapsed_minutes`, but leaves `started_at` alone — the block goes
+back to "in progress", not "never started". Safe to call twice.
+
+```bash
+curl -X PATCH "$BASE/api/countdowns/2/" -H "Authorization: Token $USER_TOKEN" \
+  -H "Content-Type: application/json" -d '{"target_date": "2026-11-15"}'
+
+curl -X PATCH "$BASE/api/block-entries/17/" -H "Authorization: Token $USER_TOKEN" \
+  -H "Content-Type: application/json" -d '{}'
+```
+
+**`GET /api/schema/`** — the full OpenAPI schema (public, no auth needed —
+field/endpoint shape only, no user data), for generating real frontend
+types instead of hand-writing them. This is the canonical reference for
+exact field names/types on every endpoint above; this doc gives shapes and
+curl examples, not an exhaustive field list.
+
+Notion sync (`POST /api/sync/notion/`, machine token) is documented
+separately in [`NOTION_SYNC.md`](NOTION_SYNC.md).

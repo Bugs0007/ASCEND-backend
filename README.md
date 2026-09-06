@@ -79,7 +79,13 @@ is a Postgres `ArrayField` — SQLite can't run the migrations.
 | `GET /api/today/` | either | Today's blocks, streak, milestones, decay, countdowns |
 | `GET /api/email-queue/` | either | Unmatched EmailEvent review queue |
 | `POST /api/blocks/<code>/start/`, `.../complete/` | human token | Tap-to-track a block |
+| `PATCH /api/block-entries/<id>/` | human token | Undo a block completion |
+| `PATCH /api/countdowns/<id>/` | human token | Set a countdown's target date (rejected if not `editable`) |
 | `GET /api/analytics/{rhythm,correlations,funnel,losses,burnup,certtrend,decay,activity,observations}/` | human token | Read-only computed analytics |
+| `GET /api/{applications,milestones,sleep-logs,daily-logs,skills,courses,cert-domains,content-posts,reflections}/` | human token | Read lists, filtered/ordered, owner-scoped |
+| `POST /api/sync/notion/` | machine token | Pull your Notion "Daily Board" into `NotionTask` — see [docs/NOTION_SYNC.md](docs/NOTION_SYNC.md) |
+| `GET /api/notion-tasks/` | human token | List the synced Notion rows |
+| `GET /api/schema/` | none | OpenAPI schema — canonical types for a frontend |
 
 Full contract with curl examples: [docs/INGEST_API.md](docs/INGEST_API.md).
 

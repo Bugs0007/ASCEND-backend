@@ -206,6 +206,11 @@ class BlockEntry(BaseModel):
         if self.started_at and self.ended_at:
             delta = self.ended_at - self.started_at
             self.elapsed_minutes = max(0, round(delta.total_seconds() / 60))
+        else:
+            # Symmetric with the branch above: an undo (clearing ended_at)
+            # must not leave a stale elapsed_minutes behind on a block that's
+            # supposedly back in progress.
+            self.elapsed_minutes = None
         self.full_clean()
         super().save(*args, **kwargs)
 
@@ -613,3 +618,34 @@ class Countdown(BaseModel):
 
     def __str__(self):
         return self.label
+
+
+# --------------------------------------------------------------------------
+# Notion "Daily Board" read-only mirror (core/notion_sync.py). Populated by
+# POST /api/sync/notion/ only — this app never writes back to Notion.
+# --------------------------------------------------------------------------
+
+class NotionTask(BaseModel):
+    # Natural key. Deliberately NOT title — the board has genuine
+    # duplicate-titled rows, so two Notion pages with the same title must
+    # stay two separate rows here.
+    notion_page_id = models.CharField(max_length=64, unique=True)
+    # TextField, not a length-capped CharField: Notion titles aren't gated
+    # the way this app's own ingest serializers gate e.g. Milestone.title,
+    # so a varchar(N) here risks an uncaught DB-level error on a long one.
+    title = models.TextField()
+    status = models.CharField(max_length=100, blank=True, default="")
+    # Nullable, unlike this app's usual "blank not-null" convention for
+    # optional text fields — "no matching property in the Notion schema" is
+    # a genuinely different, external-data-shaped unknown from "the user
+    # left this blank", so it's worth being able to tell the two apart.
+    category = models.CharField(max_length=200, null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    notion_last_edited = models.DateTimeField()
+    synced_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ["-notion_last_edited"]
+
+    def __str__(self):
+        return self.title[:80]

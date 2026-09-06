@@ -48,3 +48,9 @@ services:
         sync: false
       - key: DJANGO_SUPERUSER_PASSWORD
         sync: false
+      # Notion "Daily Board" read-only sync — docs/NOTION_SYNC.md. Optional;
+      # POST /api/sync/notion/ returns a clean 503 until NOTION_TOKEN is set.
+      - key: NOTION_TOKEN
+        sync: false
+      - key: NOTION_DAILY_BOARD_DB_ID
+        sync: false

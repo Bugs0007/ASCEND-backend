@@ -187,3 +187,21 @@ INGEST_SERIALIZERS = {
 class SleepEventSerializer(StrictFieldsMixin, serializers.Serializer):
     event = serializers.ChoiceField(choices=["bed", "wake"])
     at = serializers.DateTimeField()
+
+
+# --------------------------------------------------------------------------
+# Interactive PATCH serializers (not part of INGEST_SERIALIZERS dispatch —
+# these guard the two human-token PATCH-by-id views in core/views.py)
+# --------------------------------------------------------------------------
+
+class CountdownPatchSerializer(StrictFieldsMixin, serializers.Serializer):
+    target_date = serializers.DateField(allow_null=True)
+
+
+class BlockEntryUndoSerializer(StrictFieldsMixin, serializers.Serializer):
+    """
+    Zero declared fields, deliberately: this endpoint is one well-known
+    action (undo a completion), not a general BlockEntry editor.
+    StrictFieldsMixin turns any body content at all into a 400 "Unknown
+    field", so a client can't sneak other field changes through it.
+    """

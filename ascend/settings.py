@@ -45,6 +45,8 @@ INSTALLED_APPS = [
     "django.contrib.postgres",
     "rest_framework",
     "rest_framework.authtoken",
+    "django_filters",
+    "drf_spectacular",
     "corsheaders",
     "core",
 ]
@@ -147,6 +149,28 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
+    # Global default so the new list endpoints get filtering/ordering "for
+    # free" just by declaring filterset_fields/ordering_fields — harmless for
+    # every existing hand-rolled APIView, which never calls filter_queryset()
+    # in the first place.
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.OrderingFilter",
+    ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+# --- OpenAPI schema (drf-spectacular) ---
+# So the frontend can generate real types from /api/schema/ instead of
+# hand-written ones that drift. Existing hand-rolled analytics/today/ingest
+# views will produce noisier/less-typed schema entries than the new
+# ModelSerializer-backed read endpoints — that's pre-existing-view noise,
+# not a regression, and not something this change tries to retrofit.
+SPECTACULAR_SETTINGS = {
+    "TITLE": "ASCEND API",
+    "DESCRIPTION": "Personal 90-day program-tracking backend.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
 }
 
 # --- CORS ---
@@ -162,6 +186,15 @@ INGEST_TOKEN = config("INGEST_TOKEN")
 # Username of the superuser that machine-written rows are attributed to.
 # Falls back to the first superuser found (by id) if unset.
 INGEST_OWNER_USERNAME = config("INGEST_OWNER_USERNAME", default="")
+
+# Notion "Daily Board" read-only mirror (core/notion_sync.py). Deliberately
+# optional here, unlike SECRET_KEY/INGEST_TOKEN above — this app is already
+# live serving real traffic, and a required-no-default config() call crashes
+# every request at boot the moment this code deploys, until the var is set on
+# Render. The actual "is this configured" check happens at call time inside
+# core/notion_sync.py, returning a 503 rather than crashing the whole app.
+NOTION_TOKEN = config("NOTION_TOKEN", default="")
+NOTION_DAILY_BOARD_DB_ID = config("NOTION_DAILY_BOARD_DB_ID", default="94fb5ba274ab499b8ae23e652774be2a")
 
 # --- Security (mostly relevant behind Render's TLS-terminating proxy) ---
 if not DEBUG:

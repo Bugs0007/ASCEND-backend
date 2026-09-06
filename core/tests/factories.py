@@ -12,14 +12,18 @@ from core.models import (
     Block,
     BlockEntry,
     CertDomain,
+    ContentPost,
+    Countdown,
     Course,
     DailyLog,
     EmailEvent,
     LossPostmortem,
     Milestone,
+    NotionTask,
     PracticeTest,
     Project,
     Reflection,
+    Skill,
     SleepLog,
     StudySession,
 )
@@ -112,3 +116,26 @@ def get_cert_domain(cert_code="AI-103", domain_no=1):
 
 def get_course(name="Microsoft Learn AI-103 path"):
     return Course.objects.get(name=name)
+
+
+def get_countdown(label):
+    return Countdown.objects.get(label=label)
+
+
+def make_skill(name="Test skill", **kwargs):
+    defaults = dict(category="general", level=0, target=100)
+    defaults.update(kwargs)
+    return Skill.objects.create(name=name, **defaults)
+
+
+def make_content_post(title="Test post", **kwargs):
+    defaults = dict(platform=ContentPost.Platform.LINKEDIN, posted_on=datetime.date(2026, 9, 15))
+    defaults.update(kwargs)
+    return ContentPost.objects.create(title=title, **defaults)
+
+
+def make_notion_task(notion_page_id, title="Test task", **kwargs):
+    now = datetime.datetime(2026, 9, 15, 12, 0, tzinfo=datetime.timezone.utc)
+    defaults = dict(status="", notion_last_edited=now, synced_at=now)
+    defaults.update(kwargs)
+    return NotionTask.objects.create(notion_page_id=notion_page_id, title=title, **defaults)

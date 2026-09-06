@@ -7,10 +7,14 @@ All API views. Two authentication code paths, deliberately separate:
     the same endpoints the scheduled Claude tasks read.
   * /api/health/ requires neither (cron-job.org keep-warm hits this).
 """
+import django_filters
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework import authentication, permissions
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import authentication, generics, permissions
+from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -18,8 +22,36 @@ from core.analytics import activity, burnup, certtrend, correlations, decay, fun
 from core.auth import IngestTokenAuthentication
 from core.constants import PROGRAM_START
 from core.ingest import run_ingest, run_sleep_event_ingest
-from core.models import Block, BlockEntry, Countdown, DailyLog, EmailEvent, Milestone
-from core.serializers import SleepEventSerializer
+from core.models import (
+    Application,
+    Block,
+    BlockEntry,
+    CertDomain,
+    ContentPost,
+    Countdown,
+    Course,
+    DailyLog,
+    EmailEvent,
+    Milestone,
+    NotionTask,
+    Reflection,
+    Skill,
+    SleepLog,
+)
+from core import notion_sync
+from core.serializers import BlockEntryUndoSerializer, CountdownPatchSerializer, SleepEventSerializer
+from core.serializers_read import (
+    ApplicationReadSerializer,
+    CertDomainReadSerializer,
+    ContentPostReadSerializer,
+    CourseReadSerializer,
+    DailyLogReadSerializer,
+    MilestoneReadSerializer,
+    NotionTaskReadSerializer,
+    ReflectionReadSerializer,
+    SkillReadSerializer,
+    SleepLogReadSerializer,
+)
 
 
 # --------------------------------------------------------------------------
@@ -319,3 +351,172 @@ class ActivityView(AnalyticsAPIView):
 class ObservationsView(AnalyticsAPIView):
     def get_data(self, request):
         return observations.compute()
+
+
+# --------------------------------------------------------------------------
+# Read endpoints (human token only) — added so a frontend can replace the
+# placeholders/empty-states it shipped with (rhythm heatmap, skill radar,
+# etc.) with real data. Unlike every view above, these use real
+# ModelSerializers + generics.ListAPIView + django-filter: the user asked
+# for "DRF's built-in filter backends, don't build bespoke query parsing",
+# and a real serializer_class gives drf-spectacular something worth
+# generating types from. Existing hand-rolled views are untouched.
+#
+# Owner scoping: existing endpoints above (TodayView, EmailQueueView, every
+# analytics/* view) do NOT filter by owner at query time today — only new
+# rows get tagged with an owner on creation. These new endpoints DO filter,
+# closing that gap for the new surface only (see plan/handoff note) — zero
+# behavior change for the current single real user, since every existing
+# row is either owned by them or NULL-owned seed scaffolding.
+# --------------------------------------------------------------------------
+
+def _owned_or_shared(queryset, user):
+    return queryset.filter(Q(owner=user) | Q(owner__isnull=True))
+
+
+class OwnerScopedListAPIView(generics.ListAPIView):
+    authentication_classes = [authentication.TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+
+    def get_queryset(self):
+        return _owned_or_shared(self.queryset, self.request.user)
+
+
+class MilestoneFilterSet(django_filters.FilterSet):
+    # declarative filterset_fields can't express "project" meaning the FK's
+    # natural code rather than its raw db id — every other natural-key
+    # lookup in this app (ingest) uses codes, not ids, so this matches.
+    project = django_filters.CharFilter(field_name="project__code")
+
+    class Meta:
+        model = Milestone
+        fields = ["status"]
+
+
+class ApplicationListView(OwnerScopedListAPIView):
+    queryset = Application.objects.all()
+    serializer_class = ApplicationReadSerializer
+    filterset_fields = ["stage", "source"]
+    ordering_fields = ["last_update", "applied_on", "company"]
+    ordering = ["-last_update"]
+
+
+class MilestoneListView(OwnerScopedListAPIView):
+    queryset = Milestone.objects.select_related("project").all()
+    serializer_class = MilestoneReadSerializer
+    filterset_class = MilestoneFilterSet
+    ordering_fields = ["due_date", "title"]
+    ordering = ["due_date", "title"]
+
+
+class SleepLogListView(OwnerScopedListAPIView):
+    queryset = SleepLog.objects.all()
+    serializer_class = SleepLogReadSerializer
+    filterset_fields = {"log_date": ["gte", "lte"]}
+    ordering_fields = ["log_date"]
+    ordering = ["-log_date"]
+
+
+class DailyLogListView(OwnerScopedListAPIView):
+    queryset = DailyLog.objects.all()
+    serializer_class = DailyLogReadSerializer
+    filterset_fields = {"log_date": ["gte", "lte"]}
+    ordering_fields = ["log_date"]
+    ordering = ["-log_date"]
+
+
+class SkillListView(OwnerScopedListAPIView):
+    queryset = Skill.objects.all()
+    serializer_class = SkillReadSerializer
+    ordering_fields = ["name", "level"]
+
+
+class CourseListView(OwnerScopedListAPIView):
+    queryset = Course.objects.all()
+    serializer_class = CourseReadSerializer
+    ordering_fields = ["name", "progress_pct"]
+
+
+class CertDomainListView(OwnerScopedListAPIView):
+    queryset = CertDomain.objects.all()
+    serializer_class = CertDomainReadSerializer
+    ordering_fields = ["domain_no", "mastery_pct"]
+
+
+class ContentPostListView(OwnerScopedListAPIView):
+    queryset = ContentPost.objects.all()
+    serializer_class = ContentPostReadSerializer
+    ordering_fields = ["posted_on"]
+    ordering = ["-posted_on"]
+
+
+class ReflectionListView(OwnerScopedListAPIView):
+    queryset = Reflection.objects.all()
+    serializer_class = ReflectionReadSerializer
+    filterset_fields = {"log_date": ["gte", "lte"]}
+    ordering_fields = ["log_date"]
+    ordering = ["-log_date"]
+
+
+class NotionTaskListView(OwnerScopedListAPIView):
+    queryset = NotionTask.objects.all()
+    serializer_class = NotionTaskReadSerializer
+    filterset_fields = ["status"]
+    ordering_fields = ["due_date", "notion_last_edited"]
+
+
+# --------------------------------------------------------------------------
+# PATCH-by-id (human token only) — hand-rolled APIView, matching
+# BlockStartView/BlockCompleteView's one-purpose-per-view style, not generic
+# UpdateAPIView: there's no filtering concept on a single-object PATCH with
+# a bespoke business rule, so genericizing these would buy nothing.
+# --------------------------------------------------------------------------
+
+class CountdownDetailView(APIView):
+    authentication_classes = [authentication.TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, pk):
+        countdown = get_object_or_404(_owned_or_shared(Countdown.objects.all(), request.user), pk=pk)
+        if not countdown.editable:
+            return Response({"detail": "This countdown is not editable."}, status=400)
+        serializer = CountdownPatchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        countdown.target_date = serializer.validated_data["target_date"]
+        countdown.save()
+        return Response(_serialize_countdown(countdown))
+
+
+class BlockEntryDetailView(APIView):
+    authentication_classes = [authentication.TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, pk):
+        entry = get_object_or_404(_owned_or_shared(BlockEntry.objects.all(), request.user), pk=pk)
+        serializer = BlockEntryUndoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        # Idempotent by design: blindly sets completed=False, ended_at=None
+        # regardless of current state, so a double-undo is a harmless no-op.
+        # started_at is deliberately preserved — the mistap this exists for
+        # is on the COMPLETE tap, not the START tap, so the block goes back
+        # to "in progress", not "never started". elapsed_minutes resets to
+        # None inside BlockEntry.save() itself.
+        entry.completed = False
+        entry.ended_at = None
+        entry.save()
+        return Response(_serialize_block_entry(entry))
+
+
+# --------------------------------------------------------------------------
+# Notion "Daily Board" sync (machine token only) — read-only mirror, never
+# writes back to Notion. core/notion_sync.py holds all the actual logic;
+# this view is a one-line call, same thinness as IngestView.
+# --------------------------------------------------------------------------
+
+class NotionSyncView(APIView):
+    authentication_classes = [IngestTokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        return Response(notion_sync.sync_notion_tasks(request.user))

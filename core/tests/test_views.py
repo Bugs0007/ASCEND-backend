@@ -151,3 +151,76 @@ class TestEmailQueue:
         assert resp.status_code == 200
         assert resp.data["count"] == 1
         assert resp.data["results"][0]["gmail_message_id"] == "m1"
+
+
+class TestCountdownPatch:
+    def test_patch_updates_target_date_on_editable_countdown(self, auth_client):
+        from core.tests.factories import get_countdown
+
+        countdown = get_countdown("AI-103 exam")
+        resp = auth_client.patch(
+            f"/api/countdowns/{countdown.id}/", {"target_date": "2026-11-15"}, format="json"
+        )
+        assert resp.status_code == 200
+        countdown.refresh_from_db()
+        assert countdown.target_date.isoformat() == "2026-11-15"
+
+    def test_patch_rejects_non_editable_countdown(self, auth_client):
+        from core.tests.factories import get_countdown
+
+        countdown = get_countdown("Program end")
+        original = countdown.target_date
+        resp = auth_client.patch(
+            f"/api/countdowns/{countdown.id}/", {"target_date": "2026-01-01"}, format="json"
+        )
+        assert resp.status_code == 400
+        countdown.refresh_from_db()
+        assert countdown.target_date == original
+
+    def test_patch_requires_auth(self, api_client):
+        from core.tests.factories import get_countdown
+
+        countdown = get_countdown("AI-103 exam")
+        resp = api_client.patch(
+            f"/api/countdowns/{countdown.id}/", {"target_date": "2026-11-15"}, format="json"
+        )
+        assert resp.status_code == 401
+
+
+class TestBlockEntryUndo:
+    def test_undo_clears_ended_at_and_elapsed_minutes_but_keeps_started_at(self, auth_client):
+        auth_client.post("/api/blocks/B4/start/")
+        complete_resp = auth_client.post("/api/blocks/B4/complete/")
+        entry_id = complete_resp.data["id"]
+        started_at = complete_resp.data["started_at"]
+        assert complete_resp.data["completed"] is True
+        assert complete_resp.data["elapsed_minutes"] is not None
+
+        undo_resp = auth_client.patch(f"/api/block-entries/{entry_id}/", {}, format="json")
+        assert undo_resp.status_code == 200
+        assert undo_resp.data["completed"] is False
+        assert undo_resp.data["ended_at"] is None
+        assert undo_resp.data["elapsed_minutes"] is None
+        assert undo_resp.data["started_at"] == started_at  # preserved — still "in progress"
+
+    def test_undo_twice_is_a_safe_no_op(self, auth_client):
+        auth_client.post("/api/blocks/B5/start/")
+        complete_resp = auth_client.post("/api/blocks/B5/complete/")
+        entry_id = complete_resp.data["id"]
+
+        first = auth_client.patch(f"/api/block-entries/{entry_id}/", {}, format="json")
+        second = auth_client.patch(f"/api/block-entries/{entry_id}/", {}, format="json")
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.data["completed"] is False
+
+    def test_undo_rejects_unknown_field(self, auth_client):
+        auth_client.post("/api/blocks/B1/start/")
+        complete_resp = auth_client.post("/api/blocks/B1/complete/")
+        entry_id = complete_resp.data["id"]
+        resp = auth_client.patch(f"/api/block-entries/{entry_id}/", {"what": "sneaky"}, format="json")
+        assert resp.status_code == 400
+
+    def test_undo_requires_auth(self, api_client):
+        resp = api_client.patch("/api/block-entries/1/", {}, format="json")
+        assert resp.status_code == 401
