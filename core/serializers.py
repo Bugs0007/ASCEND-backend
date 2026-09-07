@@ -151,6 +151,26 @@ class ReflectionIngestSerializer(StrictFieldsMixin, serializers.Serializer):
     one_thing_tomorrow = serializers.CharField(required=False, allow_blank=True)
 
 
+class CourseIngestSerializer(StrictFieldsMixin, serializers.Serializer):
+    # Upsert on `name` (create-if-missing). Deliberately narrow: `progress_pct`
+    # is the field that actually moves, `active` lets a course be parked. A
+    # created row's provider/credential_type stay blank — those are seed-data
+    # metadata, not something a check-in payload sets. max_value here because
+    # Course.progress_pct's MaxValueValidator isn't run by a bare .save().
+    name = serializers.CharField(max_length=200)
+    progress_pct = serializers.IntegerField(required=False, min_value=0, max_value=100)
+    active = serializers.BooleanField(required=False)
+
+
+class SkillIngestSerializer(StrictFieldsMixin, serializers.Serializer):
+    # Upsert on `name` (create-if-missing). `level` is what changes; `target`
+    # is a fixed goal that rarely moves but is accepted for the odd case it
+    # does. Both range-capped here for the same reason as Course above.
+    name = serializers.CharField(max_length=100)
+    level = serializers.IntegerField(required=False, min_value=0, max_value=100)
+    target = serializers.IntegerField(required=False, min_value=0, max_value=100)
+
+
 class ActivitySampleIngestSerializer(StrictFieldsMixin, serializers.Serializer):
     block_entry_id = serializers.IntegerField(required=False, allow_null=True)
     started_at = serializers.DateTimeField()
@@ -177,6 +197,8 @@ INGEST_SERIALIZERS = {
     "milestones": MilestoneIngestSerializer,
     "reflections": ReflectionIngestSerializer,
     "activity_samples": ActivitySampleIngestSerializer,
+    "courses": CourseIngestSerializer,
+    "skills": SkillIngestSerializer,
 }
 
 

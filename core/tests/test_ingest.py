@@ -4,7 +4,16 @@ import pytest
 from rest_framework.exceptions import ValidationError
 
 from core.ingest import resolve_sleep_log_date, run_ingest, run_sleep_event_ingest
-from core.models import Application, DailyLog, EmailEvent, Milestone, PracticeTest, SleepLog
+from core.models import (
+    Application,
+    Course,
+    DailyLog,
+    EmailEvent,
+    Milestone,
+    PracticeTest,
+    Skill,
+    SleepLog,
+)
 from core.tests.factories import make_application
 
 pytestmark = pytest.mark.django_db
@@ -83,6 +92,61 @@ class TestIngestIdempotency:
         run_ingest(payload, owner)
         run_ingest(payload, owner)
         assert SleepLog.objects.filter(log_date=datetime.date(2026, 9, 7)).count() == 1
+
+
+class TestCourseAndSkillIngest:
+    def test_course_upsert_on_name_updates_the_seeded_row(self, owner):
+        # "Claude 101 and Claude Code" is seeded by 0002_seed_program, so the
+        # first POST updates it rather than creating — progress_pct moves off
+        # its seed value of 0.
+        payload = {"courses": [{"name": "Claude 101 and Claude Code", "progress_pct": 100}]}
+        assert run_ingest(payload, owner)["courses"] == {"created": 0, "updated": 1}
+        assert run_ingest(payload, owner)["courses"] == {"created": 0, "updated": 1}
+
+        assert Course.objects.filter(name="Claude 101 and Claude Code").count() == 1
+        assert Course.objects.get(name="Claude 101 and Claude Code").progress_pct == 100
+
+    def test_course_partial_update_leaves_other_fields_alone(self, owner):
+        run_ingest({"courses": [{"name": "Claude 101 and Claude Code", "active": False}]}, owner)
+        run_ingest({"courses": [{"name": "Claude 101 and Claude Code", "progress_pct": 30}]}, owner)
+        course = Course.objects.get(name="Claude 101 and Claude Code")
+        assert course.progress_pct == 30
+        assert course.active is False
+
+    def test_skill_upsert_on_name(self, owner):
+        payload = {"skills": [{"name": "Python", "level": 45}]}
+        run_ingest(payload, owner)
+        run_ingest(payload, owner)
+        assert Skill.objects.filter(name="Python").count() == 1
+        assert Skill.objects.get(name="Python").level == 45
+
+    def test_unseen_course_name_creates_a_new_row(self, owner):
+        summary = run_ingest({"courses": [{"name": "Brand New Course", "progress_pct": 10}]}, owner)
+        assert summary["courses"] == {"created": 1, "updated": 0}
+        assert Course.objects.get(name="Brand New Course").owner == owner
+
+    def test_unseen_skill_name_creates_a_new_row(self, owner):
+        summary = run_ingest({"skills": [{"name": "Rust", "level": 5}]}, owner)
+        assert summary["skills"] == {"created": 1, "updated": 0}
+        assert Skill.objects.get(name="Rust").owner == owner
+
+    def test_course_unknown_field_is_400(self, owner):
+        with pytest.raises(ValidationError):
+            run_ingest(
+                {"courses": [{"name": "Claude 101 and Claude Code", "provider": "Anthropic"}]},
+                owner,
+            )
+
+    def test_skill_unknown_field_is_400(self, owner):
+        with pytest.raises(ValidationError):
+            run_ingest({"skills": [{"name": "Python", "mastery": 3}]}, owner)
+
+    def test_course_progress_pct_over_100_is_400(self, owner):
+        with pytest.raises(ValidationError):
+            run_ingest(
+                {"courses": [{"name": "Claude 101 and Claude Code", "progress_pct": 150}]},
+                owner,
+            )
 
 
 class TestMilestoneEvidenceGateViaIngest:

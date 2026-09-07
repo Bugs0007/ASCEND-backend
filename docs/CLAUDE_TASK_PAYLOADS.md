@@ -8,6 +8,24 @@ BASE = <your live Render URL>
 INGEST_TOKEN = <from your Render environment variables>
 ```
 
+## Standing instruction — course and skill progress
+
+When a check-in mentions **finishing a course** or **getting noticeably
+better at a skill**, fold it into the same `/api/ingest/` call as a
+`courses` or `skills` write — don't wait to be asked, and don't raise it
+as a separate question.
+
+- Only write a number that was actually stated. "Finished Claude 101" is
+  `{"progress_pct": 100}`. "Halfway through the LangGraph course" is
+  `{"progress_pct": 50}`. A vague "made some progress" or "feeling more
+  confident on RAG" with no number is **not** a write — leave it.
+- `name` must match a seeded course/skill exactly (the lists are in
+  [`core/migrations/0002_seed_program.py`](../core/migrations/0002_seed_program.py)).
+  An unmatched name creates a *new* row, so a typo silently makes a
+  duplicate — copy the name, don't retype it.
+- `level` for skills is 0-100. Same rule: only a stated number, never an
+  estimate.
+
 ---
 
 ## 10:00 task — plan the day
@@ -113,7 +131,27 @@ curl -X POST "$BASE/api/ingest/" \
   }'
 ```
 
-**Step 4: check the review queue** and ask about anything still
+**Step 4: course / skill progress** — if the check-in surfaced any (see
+the standing instruction above), write it in the same style. Only send
+fields that actually moved:
+
+```bash
+curl -X POST "$BASE/api/ingest/" \
+  -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "courses": [
+      { "name": "Claude 101 and Claude Code", "progress_pct": 100 }
+    ],
+    "skills": [
+      { "name": "RAG and retrieval", "level": 55 }
+    ]
+  }'
+```
+
+Response: `{"courses": {"created": 0, "updated": 1}, "skills": {"created": 0, "updated": 1}}`.
+Re-running with the same values is a harmless no-op (idempotent on `name`).
+
+**Step 5: check the review queue** and ask about anything still
 unmatched:
 
 ```bash

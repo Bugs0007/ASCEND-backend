@@ -68,6 +68,18 @@ check "POST /api/ingest/ with unknown field -> 400" 400 POST "/api/ingest/" inge
   '{"daily_logs": [{"log_date": "2026-09-07", "energy": 4, "not_a_real_field": 1}]}'
 
 echo
+echo "-- Courses / skills ingest --"
+# Deliberately throwaway names so this smoke test never mutates a real
+# seeded course/skill (an unseen name creates a new row).
+COURSE_PAYLOAD='{"courses": [{"name": "__verify smoke test course__", "progress_pct": 50}]}'
+check "POST /api/ingest/ course upsert" 200 POST "/api/ingest/" ingest "$COURSE_PAYLOAD"
+check "POST /api/ingest/ same course again (idempotent)" 200 POST "/api/ingest/" ingest "$COURSE_PAYLOAD"
+check "POST /api/ingest/ skill upsert" 200 POST "/api/ingest/" ingest \
+  '{"skills": [{"name": "__verify smoke test skill__", "level": 50}]}'
+check "POST /api/ingest/ course with unknown field -> 400" 400 POST "/api/ingest/" ingest \
+  '{"courses": [{"name": "__verify smoke test course__", "provider": "nope"}]}'
+
+echo
 echo "-- Ingest sleep shortcut --"
 check "POST /api/ingest/sleep/ bed event" 200 POST "/api/ingest/sleep/" ingest \
   '{"event": "bed", "at": "2026-09-08T00:47:00+05:30"}'
