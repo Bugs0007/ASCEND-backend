@@ -22,7 +22,7 @@ for local testing.
 ## POST /api/ingest/
 
 Body: a JSON object keyed by resource type, each value a **list** of rows.
-You can post one resource type or all eleven in a single call.
+You can post one resource type or all thirteen in a single call.
 
 ```json
 {
@@ -58,6 +58,8 @@ The response is a per-resource created/updated tally:
 | `loss_postmortems` | `(application, round_reached)` | Resolved via `application_company`/`application_role`. |
 | `content_posts` | `url` when given | Falls back to `id`-based update, else always creates. |
 | `milestones` | `title` | `id` takes priority when given (see below). `project_code`/`phase_no` only ever *set* the project/phase — they never narrow the lookup, so omitting them on an update can't detach an existing link. |
+| `courses` | `name` | Matches a seeded `Course.name`; an unseen name creates a new row. |
+| `skills` | `name` | Matches a seeded `Skill.name`; an unseen name creates a new row. |
 | `study_sessions` | none | Always creates unless `id` is given. |
 | `activity_samples` | none | Append-only; nothing writes here in v1. |
 
@@ -206,6 +208,40 @@ Pass `"id": 17` to update by primary key instead (get ids from
 ```
 Nothing writes here in v1 — the model and endpoint exist for the future
 activity-tracking agent. `block_entry_id` is optional.
+
+#### `courses`
+
+```json
+{ "name": "Claude 101 and Claude Code", "progress_pct": 100, "active": true }
+```
+Upsert on `name` — it must match a seeded `Course.name` exactly (the seed
+list is in [`core/migrations/0002_seed_program.py`](../core/migrations/0002_seed_program.py);
+note "Claude 101 and Claude Code" is one combined row). An unseen name
+creates a new course (its `provider`/`credential_type` stay blank — this
+payload doesn't carry them). `progress_pct` is 0-100; `active` (default
+`true`) parks a course when `false`. Both optional — send only what moved.
+
+```bash
+curl -X POST "$BASE/api/ingest/" \
+  -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" \
+  -d '{"courses": [{"name": "Claude 101 and Claude Code", "progress_pct": 100}]}'
+```
+
+#### `skills`
+
+```json
+{ "name": "RAG and retrieval", "level": 55, "target": 80 }
+```
+Upsert on `name` (must match a seeded `Skill.name`; an unseen name creates
+a new row). `level` (0-100) is what changes over time; `target` (0-100) is
+a fixed goal and rarely moves, but is accepted for the case it does. Both
+optional.
+
+```bash
+curl -X POST "$BASE/api/ingest/" \
+  -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" \
+  -d '{"skills": [{"name": "RAG and retrieval", "level": 55}]}'
+```
 
 ---
 

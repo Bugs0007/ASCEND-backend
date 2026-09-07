@@ -85,6 +85,18 @@ Test-Endpoint -Desc "POST /api/ingest/ with unknown field -> 400" -Expected 400 
     -Body '{"daily_logs": [{"log_date": "2026-09-07", "energy": 4, "not_a_real_field": 1}]}'
 
 Write-Host ""
+Write-Host "-- Courses / skills ingest --"
+# Deliberately throwaway names so this smoke test never mutates a real
+# seeded course/skill (an unseen name creates a new row).
+$coursePayload = '{"courses": [{"name": "__verify smoke test course__", "progress_pct": 50}]}'
+Test-Endpoint -Desc "POST /api/ingest/ course upsert" -Expected 200 -Method POST -Path "/api/ingest/" -Auth ingest -Body $coursePayload
+Test-Endpoint -Desc "POST /api/ingest/ same course again (idempotent)" -Expected 200 -Method POST -Path "/api/ingest/" -Auth ingest -Body $coursePayload
+Test-Endpoint -Desc "POST /api/ingest/ skill upsert" -Expected 200 -Method POST -Path "/api/ingest/" -Auth ingest `
+    -Body '{"skills": [{"name": "__verify smoke test skill__", "level": 50}]}'
+Test-Endpoint -Desc "POST /api/ingest/ course with unknown field -> 400" -Expected 400 -Method POST -Path "/api/ingest/" -Auth ingest `
+    -Body '{"courses": [{"name": "__verify smoke test course__", "provider": "nope"}]}'
+
+Write-Host ""
 Write-Host "-- Ingest sleep shortcut --"
 Test-Endpoint -Desc "POST /api/ingest/sleep/ bed event" -Expected 200 -Method POST -Path "/api/ingest/sleep/" -Auth ingest `
     -Body '{"event": "bed", "at": "2026-09-08T00:47:00+05:30"}'
