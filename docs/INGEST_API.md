@@ -212,19 +212,21 @@ activity-tracking agent. `block_entry_id` is optional.
 #### `courses`
 
 ```json
-{ "name": "Claude 101 and Claude Code", "progress_pct": 100, "active": true }
+{ "name": "Claude 101", "progress_pct": 100, "active": true }
 ```
 Upsert on `name` — it must match a seeded `Course.name` exactly (the seed
-list is in [`core/migrations/0002_seed_program.py`](../core/migrations/0002_seed_program.py);
-note "Claude 101 and Claude Code" is one combined row). An unseen name
-creates a new course (its `provider`/`credential_type` stay blank — this
-payload doesn't carry them). `progress_pct` is 0-100; `active` (default
-`true`) parks a course when `false`. Both optional — send only what moved.
+list is in [`core/migrations/0002_seed_program.py`](../core/migrations/0002_seed_program.py),
+as corrected by
+[`core/migrations/0004_correct_course_data.py`](../core/migrations/0004_correct_course_data.py)).
+An unseen name creates a new course (its `provider`/`credential_type` stay
+blank — this payload doesn't carry them). `progress_pct` is 0-100; `active`
+(default `true`) parks a course when `false`. Both optional — send only
+what moved.
 
 ```bash
 curl -X POST "$BASE/api/ingest/" \
   -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" \
-  -d '{"courses": [{"name": "Claude 101 and Claude Code", "progress_pct": 100}]}'
+  -d '{"courses": [{"name": "Claude 101", "progress_pct": 100}]}'
 ```
 
 #### `skills`

@@ -96,20 +96,20 @@ class TestIngestIdempotency:
 
 class TestCourseAndSkillIngest:
     def test_course_upsert_on_name_updates_the_seeded_row(self, owner):
-        # "Claude 101 and Claude Code" is seeded by 0002_seed_program, so the
-        # first POST updates it rather than creating — progress_pct moves off
-        # its seed value of 0.
-        payload = {"courses": [{"name": "Claude 101 and Claude Code", "progress_pct": 100}]}
+        # "AI Agents Course" is seeded (0002_seed_program, URL-corrected in
+        # 0004_correct_course_data) with progress_pct 0, so the first POST
+        # updates it rather than creating — progress_pct moves off 0.
+        payload = {"courses": [{"name": "AI Agents Course", "progress_pct": 100}]}
         assert run_ingest(payload, owner)["courses"] == {"created": 0, "updated": 1}
         assert run_ingest(payload, owner)["courses"] == {"created": 0, "updated": 1}
 
-        assert Course.objects.filter(name="Claude 101 and Claude Code").count() == 1
-        assert Course.objects.get(name="Claude 101 and Claude Code").progress_pct == 100
+        assert Course.objects.filter(name="AI Agents Course").count() == 1
+        assert Course.objects.get(name="AI Agents Course").progress_pct == 100
 
     def test_course_partial_update_leaves_other_fields_alone(self, owner):
-        run_ingest({"courses": [{"name": "Claude 101 and Claude Code", "active": False}]}, owner)
-        run_ingest({"courses": [{"name": "Claude 101 and Claude Code", "progress_pct": 30}]}, owner)
-        course = Course.objects.get(name="Claude 101 and Claude Code")
+        run_ingest({"courses": [{"name": "Introduction to LangGraph", "active": False}]}, owner)
+        run_ingest({"courses": [{"name": "Introduction to LangGraph", "progress_pct": 30}]}, owner)
+        course = Course.objects.get(name="Introduction to LangGraph")
         assert course.progress_pct == 30
         assert course.active is False
 
@@ -133,7 +133,7 @@ class TestCourseAndSkillIngest:
     def test_course_unknown_field_is_400(self, owner):
         with pytest.raises(ValidationError):
             run_ingest(
-                {"courses": [{"name": "Claude 101 and Claude Code", "provider": "Anthropic"}]},
+                {"courses": [{"name": "AI Agents Course", "provider": "Hugging Face"}]},
                 owner,
             )
 
@@ -144,7 +144,7 @@ class TestCourseAndSkillIngest:
     def test_course_progress_pct_over_100_is_400(self, owner):
         with pytest.raises(ValidationError):
             run_ingest(
-                {"courses": [{"name": "Claude 101 and Claude Code", "progress_pct": 150}]},
+                {"courses": [{"name": "AI Agents Course", "progress_pct": 150}]},
                 owner,
             )
 

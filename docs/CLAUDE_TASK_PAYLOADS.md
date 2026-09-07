@@ -20,7 +20,10 @@ as a separate question.
   `{"progress_pct": 50}`. A vague "made some progress" or "feeling more
   confident on RAG" with no number is **not** a write — leave it.
 - `name` must match a seeded course/skill exactly (the lists are in
-  [`core/migrations/0002_seed_program.py`](../core/migrations/0002_seed_program.py)).
+  [`core/migrations/0002_seed_program.py`](../core/migrations/0002_seed_program.py),
+  courses as corrected by
+  [`0004_correct_course_data.py`](../core/migrations/0004_correct_course_data.py)
+  — e.g. it's "Claude 101" and "Claude Code 101", two separate rows).
   An unmatched name creates a *new* row, so a typo silently makes a
   duplicate — copy the name, don't retype it.
 - `level` for skills is 0-100. Same rule: only a stated number, never an
@@ -140,7 +143,7 @@ curl -X POST "$BASE/api/ingest/" \
   -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" \
   -d '{
     "courses": [
-      { "name": "Claude 101 and Claude Code", "progress_pct": 100 }
+      { "name": "Claude 101", "progress_pct": 100 }
     ],
     "skills": [
       { "name": "RAG and retrieval", "level": 55 }

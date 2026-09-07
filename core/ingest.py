@@ -301,10 +301,10 @@ def _upsert_reflection(data, owner):
 
 
 def _upsert_course(data, owner):
-    # Natural key: name. Matches the seed data (e.g. "Claude 101 and Claude
-    # Code" is one combined row). An unseen name creates a new Course — its
-    # provider/credential_type stay blank, since this payload doesn't carry
-    # them.
+    # Natural key: name — must match a seeded Course.name exactly (the list
+    # is in 0002_seed_program.py, as corrected by 0004_correct_course_data).
+    # An unseen name creates a new Course — its provider/credential_type
+    # stay blank, since this payload doesn't carry them.
     obj, created = _get_or_new(Course, {"name": data["name"]}, owner)
     _apply_fields(obj, data, skip_fields={"name"})
     _save(obj)
