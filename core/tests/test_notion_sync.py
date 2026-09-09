@@ -1,8 +1,8 @@
 """
 Notion sync tests. All Notion HTTP calls are mocked at the
-core.notion_sync._notion_get/_notion_post boundary (unittest.mock.patch) —
-no real network, no new test dependency, and no coupling to httpx's own
-Response object shape.
+core.notion_sync._notion_get/_notion_post/_notion_patch boundary
+(unittest.mock.patch) — no real network, no new test dependency, and no
+coupling to httpx's own Response object shape.
 """
 from unittest.mock import patch
 
@@ -10,6 +10,7 @@ import pytest
 
 from core import notion_sync
 from core.models import NotionTask
+from core.tests.factories import make_notion_task
 
 pytestmark = pytest.mark.django_db
 
@@ -209,3 +210,205 @@ class TestExtractPageFields:
         assert fields["status"] == ""
         assert fields["category"] is None
         assert fields["due_date"] is None
+
+
+# --------------------------------------------------------------------------
+# Part B — status_changed_at only moves when `status` actually changes
+# --------------------------------------------------------------------------
+
+class TestStatusChangedAt:
+    @patch("core.notion_sync._notion_post")
+    @patch("core.notion_sync._notion_get")
+    def test_set_on_creation(self, mock_get, mock_post, user):
+        mock_get.return_value = _schema(SCHEMA_PROPERTIES)
+        mock_post.return_value = _query_result([_page("page-1", "Task", "To Do")])
+
+        notion_sync.sync_notion_tasks(user)
+
+        row = NotionTask.objects.get(notion_page_id="page-1")
+        assert row.status_changed_at is not None
+        # Same timezone.now() call inside upsert sets both.
+        assert row.status_changed_at == row.synced_at
+
+    @patch("core.notion_sync._notion_post")
+    @patch("core.notion_sync._notion_get")
+    def test_unchanged_status_across_two_syncs_leaves_it_alone(self, mock_get, mock_post, user):
+        mock_get.return_value = _schema(SCHEMA_PROPERTIES)
+        # First sync creates the row.
+        mock_post.return_value = _query_result(
+            [_page("page-1", "Task", "To Do", last_edited="2026-09-01T12:00:00.000Z")]
+        )
+        notion_sync.sync_notion_tasks(user)
+        original = NotionTask.objects.get(notion_page_id="page-1").status_changed_at
+
+        # Second sync: same status, but a different last_edited and a
+        # different title — a real edit that isn't a status change.
+        mock_post.return_value = _query_result(
+            [_page("page-1", "Task renamed", "To Do", last_edited="2026-09-02T08:00:00.000Z")]
+        )
+        result = notion_sync.sync_notion_tasks(user)
+
+        row = NotionTask.objects.get(notion_page_id="page-1")
+        assert result["updated"] == 1  # the title change registered as an update
+        assert row.status_changed_at == original  # ...but status_changed_at didn't move
+        assert row.synced_at > original  # synced_at did
+
+    @patch("core.notion_sync._notion_post")
+    @patch("core.notion_sync._notion_get")
+    def test_changed_status_advances_it(self, mock_get, mock_post, user):
+        mock_get.return_value = _schema(SCHEMA_PROPERTIES)
+        mock_post.return_value = _query_result(
+            [_page("page-1", "Task", "To Do", last_edited="2026-09-01T12:00:00.000Z")]
+        )
+        notion_sync.sync_notion_tasks(user)
+        original = NotionTask.objects.get(notion_page_id="page-1").status_changed_at
+
+        mock_post.return_value = _query_result(
+            [_page("page-1", "Task", "Done", last_edited="2026-09-03T09:00:00.000Z")]
+        )
+        notion_sync.sync_notion_tasks(user)
+
+        row = NotionTask.objects.get(notion_page_id="page-1")
+        assert row.status == "Done"
+        assert row.status_changed_at > original
+
+
+# --------------------------------------------------------------------------
+# Part C — write status back to Notion
+# --------------------------------------------------------------------------
+
+def _status_schema(prop_type="status", options=("To Do", "In Progress", "Done")):
+    """A GET /v1/databases/{id} schema whose Status property is `prop_type`
+    (either the native "status" type or a "select" named Status) and carries
+    real options."""
+    container = {"options": [{"name": n, "id": n.lower().replace(" ", "-")} for n in options]}
+    return _schema({
+        "Name": {"name": "Name", "type": "title", "title": {}},
+        "Status": {"name": "Status", "type": prop_type, prop_type: container},
+    })
+
+
+class TestBuildStatusPatch:
+    def test_status_typed_property_shape(self):
+        assert notion_sync.build_status_patch("Status", "status", "Done") == {
+            "properties": {"Status": {"status": {"name": "Done"}}}
+        }
+
+    def test_select_typed_property_shape(self):
+        assert notion_sync.build_status_patch("Status", "select", "Done") == {
+            "properties": {"Status": {"select": {"name": "Done"}}}
+        }
+
+
+class TestWriteStatusToNotion:
+    @patch("core.notion_sync._notion_patch")
+    @patch("core.notion_sync._notion_get")
+    def test_status_typed_board_builds_status_payload(self, mock_get, mock_patch):
+        mock_get.return_value = _status_schema(prop_type="status")
+        task = make_notion_task("page-1", status="To Do")
+
+        notion_sync.write_status_to_notion(task, "Done")
+
+        path, body = mock_patch.call_args.args
+        assert path == "/pages/page-1"
+        assert body == {"properties": {"Status": {"status": {"name": "Done"}}}}
+
+    @patch("core.notion_sync._notion_patch")
+    @patch("core.notion_sync._notion_get")
+    def test_select_typed_board_builds_select_payload(self, mock_get, mock_patch):
+        mock_get.return_value = _status_schema(prop_type="select")
+        task = make_notion_task("page-2", status="To Do")
+
+        notion_sync.write_status_to_notion(task, "In Progress")
+
+        _, body = mock_patch.call_args.args
+        assert body == {"properties": {"Status": {"select": {"name": "In Progress"}}}}
+
+    @patch("core.notion_sync._notion_patch")
+    @patch("core.notion_sync._notion_get")
+    def test_rejects_status_not_in_board_options(self, mock_get, mock_patch):
+        mock_get.return_value = _status_schema(options=("To Do", "Done"))
+        task = make_notion_task("page-3", status="To Do")
+
+        with pytest.raises(notion_sync.NotionStatusError):
+            notion_sync.write_status_to_notion(task, "Archived")
+
+        mock_patch.assert_not_called()
+        task.refresh_from_db()
+        assert task.status == "To Do"  # untouched
+
+    @patch("core.notion_sync._notion_patch")
+    @patch("core.notion_sync._notion_get")
+    def test_success_updates_local_row_immediately(self, mock_get, mock_patch):
+        mock_get.return_value = _status_schema()
+        task = make_notion_task("page-4", status="To Do", status_changed_at=None)
+
+        notion_sync.write_status_to_notion(task, "Done")
+
+        row = NotionTask.objects.get(notion_page_id="page-4")
+        assert row.status == "Done"
+        assert row.status_changed_at is not None
+        assert row.status_changed_at == row.synced_at
+        assert mock_patch.call_count == 1
+
+    @patch("core.notion_sync._notion_patch")
+    @patch("core.notion_sync._notion_get")
+    def test_notion_failure_propagates_and_leaves_row_unchanged(self, mock_get, mock_patch):
+        mock_get.return_value = _status_schema()
+        mock_patch.side_effect = notion_sync.NotionAPIError("Notion said no")
+        task = make_notion_task("page-5", status="To Do")
+
+        with pytest.raises(notion_sync.NotionAPIError):
+            notion_sync.write_status_to_notion(task, "Done")
+
+        assert NotionTask.objects.get(notion_page_id="page-5").status == "To Do"
+
+
+class TestWriteBackEndpoint:
+    @patch("core.notion_sync._notion_patch")
+    @patch("core.notion_sync._notion_get")
+    def test_patch_updates_status(self, mock_get, mock_patch, auth_client, user):
+        mock_get.return_value = _status_schema()
+        task = make_notion_task("page-1", status="To Do", owner=user)
+
+        resp = auth_client.patch(
+            f"/api/notion-tasks/{task.id}/", {"status": "Done"}, format="json"
+        )
+        assert resp.status_code == 200
+        assert resp.data["status"] == "Done"
+        assert resp.data["status_changed_at"] is not None
+        task.refresh_from_db()
+        assert task.status == "Done"
+
+    @patch("core.notion_sync._notion_patch")
+    @patch("core.notion_sync._notion_get")
+    def test_patch_rejects_invalid_status_with_400(self, mock_get, mock_patch, auth_client, user):
+        mock_get.return_value = _status_schema(options=("To Do", "Done"))
+        task = make_notion_task("page-1", status="To Do", owner=user)
+
+        resp = auth_client.patch(
+            f"/api/notion-tasks/{task.id}/", {"status": "Nonsense"}, format="json"
+        )
+        assert resp.status_code == 400
+        mock_patch.assert_not_called()
+
+    def test_patch_rejects_unknown_body_field(self, auth_client, user):
+        task = make_notion_task("page-1", owner=user)
+        resp = auth_client.patch(
+            f"/api/notion-tasks/{task.id}/", {"status": "Done", "title": "hax"}, format="json"
+        )
+        assert resp.status_code == 400
+
+    def test_patch_rejects_ingest_token(self, ingest_client, user):
+        task = make_notion_task("page-1", owner=user)
+        resp = ingest_client.patch(
+            f"/api/notion-tasks/{task.id}/", {"status": "Done"}, format="json"
+        )
+        assert resp.status_code in (401, 403)
+
+    def test_patch_requires_auth(self, api_client, user):
+        task = make_notion_task("page-1", owner=user)
+        resp = api_client.patch(
+            f"/api/notion-tasks/{task.id}/", {"status": "Done"}, format="json"
+        )
+        assert resp.status_code == 401

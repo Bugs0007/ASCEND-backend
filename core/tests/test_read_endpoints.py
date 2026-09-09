@@ -110,6 +110,15 @@ class TestMilestoneFilters:
         assert "On B" not in titles
         assert all(row["project"] == "A" for row in resp.data["results"])
 
+    def test_detail_field_is_exposed(self, auth_client):
+        # Seeded Project A milestones carry `detail` (0006_seed_phase1_detail);
+        # a freshly-made one without it serializes as null, not a missing key.
+        make_milestone(title="No detail here")
+        resp = auth_client.get("/api/milestones/?project=A")
+        assert resp.status_code == 200
+        assert all("detail" in row for row in resp.data["results"])
+        assert any(row["detail"] for row in resp.data["results"])
+
 
 class TestDateRangeFilters:
     def test_daily_logs_date_range(self, auth_client):

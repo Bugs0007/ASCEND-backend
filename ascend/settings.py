@@ -187,12 +187,14 @@ INGEST_TOKEN = config("INGEST_TOKEN")
 # Falls back to the first superuser found (by id) if unset.
 INGEST_OWNER_USERNAME = config("INGEST_OWNER_USERNAME", default="")
 
-# Notion "Daily Board" read-only mirror (core/notion_sync.py). Deliberately
-# optional here, unlike SECRET_KEY/INGEST_TOKEN above — this app is already
-# live serving real traffic, and a required-no-default config() call crashes
-# every request at boot the moment this code deploys, until the var is set on
-# Render. The actual "is this configured" check happens at call time inside
-# core/notion_sync.py, returning a 503 rather than crashing the whole app.
+# Notion "Daily Board" mirror + status write-back (core/notion_sync.py).
+# Deliberately optional here, unlike SECRET_KEY/INGEST_TOKEN above — this app
+# is already live serving real traffic, and a required-no-default config()
+# call crashes every request at boot the moment this code deploys, until the
+# var is set on Render. The actual "is this configured" check happens at call
+# time inside core/notion_sync.py, returning a 503 rather than crashing the
+# whole app. The write-back path additionally needs the Notion integration's
+# "Update content" capability enabled (see docs/NOTION_SYNC.md).
 NOTION_TOKEN = config("NOTION_TOKEN", default="")
 NOTION_DAILY_BOARD_DB_ID = config("NOTION_DAILY_BOARD_DB_ID", default="94fb5ba274ab499b8ae23e652774be2a")
 

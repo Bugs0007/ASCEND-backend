@@ -123,6 +123,24 @@ foreach ($path in @("applications", "milestones", "sleep-logs", "daily-logs", "s
 }
 
 Write-Host ""
+Write-Host "-- Notion status write-back (user token) --"
+Test-Endpoint -Desc "PATCH /api/notion-tasks/1/ with ingest token -> 401" -Expected 401 -Method PATCH -Path "/api/notion-tasks/1/" -Auth ingest -Body '{"status": "Done"}'
+# Safe check: a status that can't be a real board option must be rejected
+# BEFORE anything is written to Notion. 400 (invalid status), 404 (no row 1)
+# and 503 (NOTION_TOKEN unset) all mean "did not write a bogus status".
+$wbResp = Invoke-WebRequest -Uri "$BaseUrl/api/notion-tasks/1/" -Method PATCH `
+    -Headers @{Authorization = "Token $UserToken"} -ContentType "application/json" `
+    -Body '{"status": "__not a real board option__"}' -SkipHttpErrorCheck
+$wbCode = [int]$wbResp.StatusCode
+if ($wbCode -in 400, 404, 503) {
+    Write-Host "  OK   [$wbCode] PATCH /api/notion-tasks/1/ rejected a bogus status without writing to Notion"
+    $script:Pass++
+} else {
+    Write-Host "  FAIL [$wbCode, expected 400/404/503] PATCH /api/notion-tasks/1/ bogus status"
+    $script:Fail++
+}
+
+Write-Host ""
 Write-Host "-- OpenAPI schema (public) --"
 Test-Endpoint -Desc "GET /api/schema/ (no auth)" -Expected 200 -Method GET -Path "/api/schema/" -Auth none
 
