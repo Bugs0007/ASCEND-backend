@@ -213,11 +213,20 @@ class SleepEventSerializer(StrictFieldsMixin, serializers.Serializer):
 
 # --------------------------------------------------------------------------
 # Interactive PATCH serializers (not part of INGEST_SERIALIZERS dispatch —
-# these guard the two human-token PATCH-by-id views in core/views.py)
+# these guard the human-token PATCH-by-id views in core/views.py)
 # --------------------------------------------------------------------------
 
 class CountdownPatchSerializer(StrictFieldsMixin, serializers.Serializer):
     target_date = serializers.DateField(allow_null=True)
+
+
+class NotionTaskStatusPatchSerializer(StrictFieldsMixin, serializers.Serializer):
+    """PATCH /api/notion-tasks/<id>/ — one field, the new status. The value
+    is only shape-checked here; whether it's a *real* option on the Notion
+    board is validated in core.notion_sync.write_status_to_notion against
+    the live database schema (a static ChoiceField can't know the board's
+    options)."""
+    status = serializers.CharField(max_length=100)
 
 
 class BlockEntryUndoSerializer(StrictFieldsMixin, serializers.Serializer):

@@ -45,7 +45,7 @@ class MilestoneReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Milestone
         fields = [
-            "id", "title", "project", "phase", "week_no", "category",
+            "id", "title", "detail", "project", "phase", "week_no", "category",
             "due_date", "status", "completed_on", "evidence_url", "post_angle",
         ]
 
@@ -112,5 +112,5 @@ class NotionTaskReadSerializer(serializers.ModelSerializer):
         model = NotionTask
         fields = [
             "id", "notion_page_id", "title", "status", "category",
-            "due_date", "notion_last_edited", "synced_at",
+            "due_date", "notion_last_edited", "synced_at", "status_changed_at",
         ]

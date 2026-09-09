@@ -3,12 +3,44 @@ import datetime
 import pytest
 from django.core.exceptions import ValidationError
 
-from core.models import Application, Milestone, Project, SleepLog
+from core.models import Application, Milestone, Project, SleepLog, Week
 from core.tests.factories import make_block_entry, make_daily_log, make_milestone
 
 pytestmark = pytest.mark.django_db
 
 DAY0 = datetime.date(2026, 9, 7)
+
+
+class TestPhase1DetailSeed:
+    """0006_seed_phase1_detail — detail written for weeks 1-4 and Project A
+    only, everything else left NULL on purpose."""
+
+    def test_weeks_1_to_4_have_all_three_details(self):
+        for week_no in (1, 2, 3, 4):
+            week = Week.objects.get(week_no=week_no)
+            assert week.build_detail
+            assert week.learn_detail
+            assert week.sharpen_detail
+
+    def test_week_1_build_detail_is_the_verbatim_text(self):
+        assert Week.objects.get(week_no=1).build_detail.startswith(
+            "You're building a fixed set of question-and-answer pairs"
+        )
+
+    def test_weeks_5_onward_left_null(self):
+        for week in Week.objects.filter(week_no__gte=5):
+            assert week.build_detail is None
+            assert week.learn_detail is None
+            assert week.sharpen_detail is None
+
+    def test_project_a_milestones_all_have_detail(self):
+        milestones = Milestone.objects.filter(project__code="A")
+        assert milestones.count() == 9
+        assert all(m.detail for m in milestones)
+
+    def test_project_b_and_c_milestones_left_null(self):
+        for m in Milestone.objects.filter(project__code__in=["B", "C"]):
+            assert m.detail is None
 
 
 class TestMilestoneEvidenceGate:

@@ -40,9 +40,10 @@ urlpatterns = [
     path("reflections/", views.ReflectionListView.as_view(), name="reflections"),
     path("countdowns/<int:pk>/", views.CountdownDetailView.as_view(), name="countdown-detail"),
     path("block-entries/<int:pk>/", views.BlockEntryDetailView.as_view(), name="block-entry-detail"),
-    # --- Notion "Daily Board" sync ---
+    # --- Notion "Daily Board" sync + status write-back ---
     path("sync/notion/", views.NotionSyncView.as_view(), name="sync-notion"),
     path("notion-tasks/", views.NotionTaskListView.as_view(), name="notion-tasks"),
+    path("notion-tasks/<int:pk>/", views.NotionTaskDetailView.as_view(), name="notion-task-detail"),
     # --- OpenAPI schema, public: field/endpoint shape only, no user data ---
     path(
         "schema/",

@@ -1,13 +1,17 @@
 """
-Read-only mirror of the user's Notion "Daily Board" database into
-NotionTask. Populated only by POST /api/sync/notion/ (core/views.py) — this
-module never writes back to Notion.
+Mirror of the user's Notion "Daily Board" database into NotionTask, pulled
+in by POST /api/sync/notion/ (core/views.py). Mostly one-directional:
+title/category/due_date are read-only mirrors. The one write path back to
+Notion is write_status_to_notion() — PATCH /api/notion-tasks/<id>/ pushes a
+status change onto the Notion page and updates the local row in the same
+request, so the board reflects it without waiting for the next cron sync.
 
 Mirrors core/ingest.py's shape: the view is a one-line call into
-sync_notion_tasks(); everything else here is plain, independently-testable
-functions. The two HTTP wrappers (_notion_get/_notion_post) are the mock
-boundary for tests — patch those two, never httpx itself, so tests don't
-depend on httpx's Response object shape.
+sync_notion_tasks() / write_status_to_notion(); everything else here is
+plain, independently-testable functions. The three HTTP wrappers
+(_notion_get/_notion_post/_notion_patch) are the mock boundary for tests —
+patch those, never httpx itself, so tests don't depend on httpx's Response
+object shape.
 
 Schema introspection (detect_properties) never assumes field names — a
 Notion database only guarantees exactly one property of type "title"; status
@@ -45,6 +49,15 @@ class NotionAPIError(APIException):
     default_code = "notion_api_error"
 
 
+class NotionStatusError(APIException):
+    # Client error, not a gateway error: the requested status isn't a real
+    # option on the board (or the board has no status property to write to),
+    # so there is nothing to retry — the caller sent a bad value.
+    status_code = 400
+    default_detail = "That status is not a valid option on the Notion board."
+    default_code = "notion_invalid_status"
+
+
 def _require_notion_config():
     # Checked at call time, not at settings-load time (see ascend/settings.py
     # comment) — this app is already live serving real traffic, and a
@@ -77,6 +90,15 @@ def _notion_post(path, json_body):
         resp.raise_for_status()
     except httpx.HTTPError as exc:
         raise NotionAPIError(f"Notion API error on POST {path}: {exc}") from exc
+    return resp.json()
+
+
+def _notion_patch(path, json_body):
+    try:
+        resp = httpx.patch(f"{NOTION_API_BASE}{path}", headers=_headers(), json=json_body, timeout=15)
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise NotionAPIError(f"Notion API error on PATCH {path}: {exc}") from exc
     return resp.json()
 
 
@@ -207,14 +229,22 @@ def upsert_notion_task(fields: dict, owner):
             notion_page_id=fields["notion_page_id"],
             owner=owner,
             synced_at=now,
+            status_changed_at=now,
             **content_fields,
         )
         return obj, "created"
 
+    # Compare status BEFORE the setattr loop overwrites it. status_changed_at
+    # only moves when the value genuinely differs — an edit to any other
+    # field, or a no-op re-sync, leaves it alone (that's the whole point of
+    # the field vs notion_last_edited / synced_at).
+    status_changed = existing.status != fields["status"]
     changed = any(getattr(existing, key) != value for key, value in content_fields.items())
     for key, value in content_fields.items():
         setattr(existing, key, value)
     existing.synced_at = now
+    if status_changed:
+        existing.status_changed_at = now
     existing.save()
     return existing, ("updated" if changed else "unchanged")
 
@@ -233,3 +263,67 @@ def sync_notion_tasks(owner) -> dict:
         counts[status] += 1
 
     return {**counts, "matched_properties": prop_map}
+
+
+# --------------------------------------------------------------------------
+# Write-back: PATCH /api/notion-tasks/<id>/ -> Notion page status
+# --------------------------------------------------------------------------
+
+def _status_option_names(prop_spec: dict) -> list:
+    """Valid option names for a status- or select-typed property, read from
+    its spec in GET /v1/databases/{id}. Both types nest their options the
+    same way: spec[spec["type"]]["options"] -> [{"name": ...}, ...] (a
+    "status" property also has "groups", which we don't need). Returns []
+    for anything else."""
+    options = (prop_spec.get(prop_spec.get("type")) or {}).get("options") or []
+    return [o["name"] for o in options if o.get("name")]
+
+
+def build_status_patch(prop_name: str, prop_type: str, new_status: str) -> dict:
+    """The PATCH-page body for a status change. Notion's payload shape
+    differs by property type:
+        status  -> {"properties": {<name>: {"status": {"name": ...}}}}
+        select  -> {"properties": {<name>: {"select": {"name": ...}}}}
+    Anything that isn't a native "status" property is treated as "select"
+    (matches detect_properties' own select fallback)."""
+    key = "status" if prop_type == "status" else "select"
+    return {"properties": {prop_name: {key: {"name": new_status}}}}
+
+
+def write_status_to_notion(task, new_status: str):
+    """Push `new_status` onto the Notion page backing `task`, then update the
+    local row. Validates against the board's real status options first — an
+    arbitrary string is a 400 (NotionStatusError), never written to Notion.
+    A Notion API failure raises NotionAPIError (502); the local row is only
+    touched after Notion confirms the write."""
+    _require_notion_config()
+
+    schema = _notion_get(f"/databases/{settings.NOTION_DAILY_BOARD_DB_ID}")
+    properties = schema.get("properties", {})
+    status_prop_name = detect_properties(properties).get("status")
+    if not status_prop_name:
+        raise NotionStatusError(
+            "This Notion board has no status-typed (or status-named select) "
+            "property to write to."
+        )
+
+    prop_spec = properties.get(status_prop_name, {})
+    prop_type = prop_spec.get("type")
+    valid_options = _status_option_names(prop_spec)
+    if new_status not in valid_options:
+        raise NotionStatusError(
+            f"{new_status!r} is not a valid option on the board's "
+            f"{status_prop_name!r} property. Valid options: {valid_options}."
+        )
+
+    _notion_patch(
+        f"/pages/{task.notion_page_id}",
+        build_status_patch(status_prop_name, prop_type, new_status),
+    )
+
+    now = timezone.now()
+    task.status = new_status
+    task.status_changed_at = now
+    task.synced_at = now
+    task.save()
+    return task

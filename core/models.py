@@ -91,6 +91,13 @@ class Week(BaseModel):
     build_focus = models.CharField(max_length=200, blank=True)
     learn_focus = models.CharField(max_length=200, blank=True)
     sharpen_focus = models.CharField(max_length=200, blank=True)
+    # Long-form definition-of-done for each *_focus line above. Nullable
+    # rather than the usual blank-not-null convention: NULL means "detail not
+    # written yet" (weeks 5-13, deliberately deferred), a genuinely different
+    # state from "" — same reasoning as NotionTask.category below.
+    build_detail = models.TextField(null=True, blank=True)
+    learn_detail = models.TextField(null=True, blank=True)
+    sharpen_detail = models.TextField(null=True, blank=True)
 
     class Meta:
         ordering = ["week_no"]
@@ -397,6 +404,10 @@ class Milestone(BaseModel):
         DROPPED = "dropped", "Dropped"
 
     title = models.CharField(max_length=300)
+    # Long-form scope / definition-of-done for this milestone. Nullable for
+    # the same reason as Week.*_detail: NULL is "not written yet" (Projects
+    # B/C, deferred), distinct from "".
+    detail = models.TextField(null=True, blank=True)
     project = models.ForeignKey(Project, on_delete=models.CASCADE, null=True, blank=True, related_name="milestones")
     phase = models.ForeignKey(Phase, on_delete=models.SET_NULL, null=True, blank=True, related_name="milestones")
     week_no = models.PositiveSmallIntegerField(null=True, blank=True)
@@ -621,8 +632,11 @@ class Countdown(BaseModel):
 
 
 # --------------------------------------------------------------------------
-# Notion "Daily Board" read-only mirror (core/notion_sync.py). Populated by
-# POST /api/sync/notion/ only — this app never writes back to Notion.
+# Notion "Daily Board" mirror (core/notion_sync.py). Rows are pulled in by
+# POST /api/sync/notion/. Two-way as of the write-back endpoint: PATCH
+# /api/notion-tasks/<id>/ pushes a status change back to the Notion page and
+# updates the local row in the same request. Nothing else here is written
+# back — title/category/due_date stay read-only mirrors.
 # --------------------------------------------------------------------------
 
 class NotionTask(BaseModel):
@@ -643,6 +657,14 @@ class NotionTask(BaseModel):
     due_date = models.DateField(null=True, blank=True)
     notion_last_edited = models.DateTimeField()
     synced_at = models.DateTimeField()
+    # When `status` last actually *changed* value, as opposed to
+    # notion_last_edited (bumped by any edit) or synced_at (bumped every
+    # sync). Set on row creation and only re-stamped when a sync or the
+    # write-back endpoint sees a different status than what's stored — this
+    # is what the frontend's 48-hour auto-archive rule counts from. Nullable
+    # for rows that predate this field; they get a value on their next
+    # status change.
+    status_changed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-notion_last_edited"]

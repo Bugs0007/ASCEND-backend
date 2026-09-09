@@ -360,11 +360,22 @@ curl -X PATCH "$BASE/api/block-entries/17/" -H "Authorization: Token $USER_TOKEN
   -H "Content-Type: application/json" -d '{}'
 ```
 
+**`PATCH /api/notion-tasks/<id>/`** — `{"status": "<new status>"}` writes a
+task's status back to its Notion page (validated against the board's real
+options) and updates the local row in the same response. `400` for a value
+that isn't a real board option; `502` if Notion rejects the write. Full
+detail in [`NOTION_SYNC.md`](NOTION_SYNC.md).
+
+```bash
+curl -X PATCH "$BASE/api/notion-tasks/42/" -H "Authorization: Token $USER_TOKEN" \
+  -H "Content-Type: application/json" -d '{"status": "In Progress"}'
+```
+
 **`GET /api/schema/`** — the full OpenAPI schema (public, no auth needed —
 field/endpoint shape only, no user data), for generating real frontend
 types instead of hand-writing them. This is the canonical reference for
 exact field names/types on every endpoint above; this doc gives shapes and
 curl examples, not an exhaustive field list.
 
-Notion sync (`POST /api/sync/notion/`, machine token) is documented
-separately in [`NOTION_SYNC.md`](NOTION_SYNC.md).
+Notion sync (`POST /api/sync/notion/`, machine token) and the status
+write-back above are documented in full in [`NOTION_SYNC.md`](NOTION_SYNC.md).

@@ -39,7 +39,12 @@ from core.models import (
     SleepLog,
 )
 from core import notion_sync
-from core.serializers import BlockEntryUndoSerializer, CountdownPatchSerializer, SleepEventSerializer
+from core.serializers import (
+    BlockEntryUndoSerializer,
+    CountdownPatchSerializer,
+    NotionTaskStatusPatchSerializer,
+    SleepEventSerializer,
+)
 from core.serializers_read import (
     ApplicationReadSerializer,
     CertDomainReadSerializer,
@@ -509,9 +514,9 @@ class BlockEntryDetailView(APIView):
 
 
 # --------------------------------------------------------------------------
-# Notion "Daily Board" sync (machine token only) — read-only mirror, never
-# writes back to Notion. core/notion_sync.py holds all the actual logic;
-# this view is a one-line call, same thinness as IngestView.
+# Notion "Daily Board" sync (machine token only) — pulls the board into
+# NotionTask. core/notion_sync.py holds all the actual logic; this view is a
+# one-line call, same thinness as IngestView.
 # --------------------------------------------------------------------------
 
 class NotionSyncView(APIView):
@@ -520,3 +525,25 @@ class NotionSyncView(APIView):
 
     def post(self, request):
         return Response(notion_sync.sync_notion_tasks(request.user))
+
+
+# --------------------------------------------------------------------------
+# Notion status write-back (human token only) — this is a UI action from the
+# /board page, not the machine ingest path, so it takes the user's own
+# token like the other PATCH-by-id views above. Validates the new status
+# against the board's live options, PATCHes the Notion page, then updates
+# the local row so the change shows without waiting for the next cron sync.
+# --------------------------------------------------------------------------
+
+class NotionTaskDetailView(APIView):
+    authentication_classes = [authentication.TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, pk):
+        task = get_object_or_404(
+            _owned_or_shared(NotionTask.objects.all(), request.user), pk=pk
+        )
+        serializer = NotionTaskStatusPatchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        updated = notion_sync.write_status_to_notion(task, serializer.validated_data["status"])
+        return Response(NotionTaskReadSerializer(updated).data)

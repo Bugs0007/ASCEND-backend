@@ -106,6 +106,27 @@ for path in applications milestones sleep-logs daily-logs skills courses cert-do
 done
 
 echo
+echo "-- Notion status write-back (user token) --"
+check "PATCH /api/notion-tasks/1/ with ingest token -> 401" 401 PATCH "/api/notion-tasks/1/" ingest '{"status": "Done"}'
+# Safe check: a status that can't be a real board option must be rejected
+# BEFORE anything is written to Notion. Acceptable outcomes:
+#   400 - row 1 exists, Notion configured, status rejected as invalid
+#   404 - no NotionTask with id 1 in this deployment
+#   503 - NOTION_TOKEN not set yet (checked before the status is validated)
+# Any of the three means "did not write a bogus status to the board".
+WB_CODE=$(curl -s -o /tmp/notion_wb_body -w "%{http_code}" -X PATCH "$BASE/api/notion-tasks/1/" \
+  -H "Authorization: Token $USER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"status": "__not a real board option__"}')
+if [ "$WB_CODE" = "400" ] || [ "$WB_CODE" = "404" ] || [ "$WB_CODE" = "503" ]; then
+  echo "  OK   [$WB_CODE] PATCH /api/notion-tasks/1/ rejected a bogus status without writing to Notion"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL [$WB_CODE, expected 400/404/503] PATCH /api/notion-tasks/1/ bogus status — $(head -c 300 /tmp/notion_wb_body)"
+  FAIL=$((FAIL + 1))
+fi
+rm -f /tmp/notion_wb_body
+
+echo
 echo "-- OpenAPI schema (public) --"
 check "GET /api/schema/ (no auth)" 200 GET "/api/schema/" none
 

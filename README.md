@@ -85,6 +85,7 @@ is a Postgres `ArrayField` — SQLite can't run the migrations.
 | `GET /api/{applications,milestones,sleep-logs,daily-logs,skills,courses,cert-domains,content-posts,reflections}/` | human token | Read lists, filtered/ordered, owner-scoped |
 | `POST /api/sync/notion/` | machine token | Pull your Notion "Daily Board" into `NotionTask` — see [docs/NOTION_SYNC.md](docs/NOTION_SYNC.md) |
 | `GET /api/notion-tasks/` | human token | List the synced Notion rows |
+| `PATCH /api/notion-tasks/<id>/` | human token | Write a task's status back to Notion (validated against the board's real options) |
 | `GET /api/schema/` | none | OpenAPI schema — canonical types for a frontend |
 
 Full contract with curl examples: [docs/INGEST_API.md](docs/INGEST_API.md).
