@@ -671,3 +671,127 @@ class NotionTask(BaseModel):
 
     def __str__(self):
         return self.title[:80]
+
+
+# --------------------------------------------------------------------------
+# Today planning — BacklogItem / DailyRecommendation / TodaySelection
+#
+# Replaces the old fixed five-block day. A day's work is now an ordered list
+# of TodaySelection rows of any length, each pointing back at where it came
+# from: an ASCEND-native BacklogItem, a Notion "Daily Board" row, a
+# DailyRecommendation pushed by the Morning Brief task, or a one-off "adhoc"
+# entry typed straight into the UI. The old Block rows (B1-B5) survive only
+# as an optional category tag on a selection.
+#
+# The single day-level DailyLog.deep_work_minutes quick-log field is
+# deprecated in favour of per-selection `minutes_spent`; `daily_minutes_total`
+# below is the read-only computed aggregate that replaces it in API responses.
+# GREEN_DAY_DONE_NUMERATOR / _DENOMINATOR (core.constants) define the streak's
+# green-day rule against this list — see core/analytics/streaks.py.
+# --------------------------------------------------------------------------
+
+class _SourceProject(models.TextChoices):
+    CASE_INTEL = "case-intel", "Case Intel"
+    AI_103 = "ai-103", "AI-103"
+    OTHER = "other", "Other"
+
+
+class BacklogItem(BaseModel):
+    """ASCEND-native candidate work — project milestones and cert-study tasks
+    that aren't on the Notion job-search board. Written via POST /api/ingest/
+    (`backlog_items`, upsert on title). Surfaces in GET /api/today/pool/ while
+    `status` is pending."""
+
+    SourceProject = _SourceProject
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        DONE = "done", "Done"
+
+    title = models.CharField(max_length=300)
+    source_project = models.CharField(
+        max_length=20, choices=_SourceProject.choices, default=_SourceProject.OTHER
+    )
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.title
+
+
+class DailyRecommendation(BaseModel):
+    """One suggested task for one date, with a one-line rationale. ASCEND only
+    stores these — it never generates them. The Morning Brief scheduled task
+    computes the day's 2-4 suggestions and pushes them via
+    POST /api/today/recommendations/."""
+
+    SourceProject = _SourceProject
+
+    title = models.CharField(max_length=300)
+    rationale = models.CharField(max_length=500, blank=True)
+    source_project = models.CharField(
+        max_length=20, choices=_SourceProject.choices, default=_SourceProject.OTHER
+    )
+    date = models.DateField()
+
+    class Meta:
+        ordering = ["-date", "id"]
+
+    def __str__(self):
+        return f"{self.date} — {self.title}"
+
+
+class TodaySelectionQuerySet(models.QuerySet):
+    def minutes_total(self):
+        return self.aggregate(total=models.Sum("minutes_spent"))["total"] or 0
+
+
+class TodaySelection(BaseModel):
+    """One task the user committed to for a given day. `source_type` /
+    `source_id` point back at the row it came from (`source_id` is a plain
+    local pk, not a real FK — the three possible targets are different models
+    and a selection should outlive its source row). `title` is always
+    denormalised so the checklist renders without a join. Ordered within a day
+    by `position`."""
+
+    class SourceType(models.TextChoices):
+        BACKLOG = "backlog", "ASCEND backlog"
+        NOTION = "notion", "Notion Daily Board"
+        RECOMMENDATION = "recommendation", "Daily recommendation"
+        ADHOC = "adhoc", "One-off"
+
+    date = models.DateField(db_index=True)
+    source_type = models.CharField(max_length=14, choices=SourceType.choices)
+    # Local row id of the source (BacklogItem / NotionTask / DailyRecommendation
+    # pk). NULL for adhoc entries, which carry only their own title.
+    source_id = models.PositiveIntegerField(null=True, blank=True)
+    title = models.CharField(max_length=300)
+    # The old fixed blocks (B1-B5) survive only as this optional label — a day
+    # no longer needs one of each, or any.
+    block = models.ForeignKey(
+        Block, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    minutes_spent = models.PositiveIntegerField(null=True, blank=True)
+    done = models.BooleanField(default=False)
+    position = models.PositiveSmallIntegerField(default=0)
+
+    objects = TodaySelectionQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["date", "position", "id"]
+
+    def __str__(self):
+        return f"{self.date} #{self.position} {self.title}"
+
+
+def daily_minutes_total(log_date, owner=None):
+    """Computed replacement for the deprecated DailyLog.deep_work_minutes
+    quick-log field: the sum of `minutes_spent` across a day's TodaySelection
+    rows. `owner=None` sums every row for the date (fine for the single-user
+    install); pass a user to scope to their own + shared rows."""
+    qs = TodaySelection.objects.filter(date=log_date)
+    if owner is not None:
+        qs = qs.filter(models.Q(owner=owner) | models.Q(owner__isnull=True))
+    return qs.minutes_total()

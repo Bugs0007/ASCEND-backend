@@ -16,6 +16,18 @@ urlpatterns = [
     path("ingest/", views.IngestView.as_view(), name="ingest"),
     path("ingest/sleep/", views.IngestSleepView.as_view(), name="ingest-sleep"),
     path("today/", views.TodayView.as_view(), name="today"),
+    path("today/pool/", views.TodayPoolView.as_view(), name="today-pool"),
+    path(
+        "today/recommendations/",
+        views.TodayRecommendationsView.as_view(),
+        name="today-recommendations",
+    ),
+    path("today/selections/", views.TodaySelectionsView.as_view(), name="today-selections"),
+    path(
+        "today/selections/<int:pk>/",
+        views.TodaySelectionDetailView.as_view(),
+        name="today-selection-detail",
+    ),
     path("email-queue/", views.EmailQueueView.as_view(), name="email-queue"),
     path("blocks/<str:code>/start/", views.BlockStartView.as_view(), name="block-start"),
     path("blocks/<str:code>/complete/", views.BlockCompleteView.as_view(), name="block-complete"),

@@ -3,8 +3,20 @@ import datetime
 import pytest
 from django.core.exceptions import ValidationError
 
-from core.models import Application, Milestone, Project, SleepLog, Week
-from core.tests.factories import make_block_entry, make_daily_log, make_milestone
+from core.models import (
+    Application,
+    Milestone,
+    Project,
+    SleepLog,
+    Week,
+    daily_minutes_total,
+)
+from core.tests.factories import (
+    make_block_entry,
+    make_daily_log,
+    make_milestone,
+    make_today_selection,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -132,6 +144,23 @@ class TestBlockEntryDerivation:
         make_block_entry(log, block_code="B1")
         with pytest.raises(ValidationError):
             make_block_entry(log, block_code="B1")
+
+
+class TestDailyMinutesTotal:
+    def test_sums_the_days_selection_minutes(self):
+        make_today_selection(DAY0, title="a", minutes_spent=60, position=1)
+        make_today_selection(DAY0, title="b", minutes_spent=45, position=2)
+        make_today_selection(DAY0, title="c", minutes_spent=None, position=3)
+        # a different day's row must not leak in
+        make_today_selection(DAY0 + datetime.timedelta(days=1), title="d", minutes_spent=999)
+        assert daily_minutes_total(DAY0) == 105
+
+    def test_zero_when_nothing_logged(self):
+        make_today_selection(DAY0, title="a", minutes_spent=None)
+        assert daily_minutes_total(DAY0) == 0
+
+    def test_zero_for_a_day_with_no_selections(self):
+        assert daily_minutes_total(DAY0) == 0
 
 
 class TestApplicationFurthestStage:

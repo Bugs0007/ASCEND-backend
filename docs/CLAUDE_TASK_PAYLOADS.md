@@ -40,15 +40,45 @@ curl -s "$BASE/api/today/" -H "Authorization: Bearer $INGEST_TOKEN"
 ```
 
 Use the response to plan: `status` (handle `pre_start` before day one —
-just report the countdown and stop), `streak`, `blocks` (which of B1-B5 are
-already done today — should be none at 10:00 unless something ran early),
+just report the countdown and stop), `streak`, `today_selections` (the
+day's task list — empty at 10:00 until the user runs "Start the day";
+`deep_work_total` is the computed minutes so far),
 `open_milestones` and `shippable_milestones` (anything postable today?),
 `decay_alerts` (projects/cert domains/applications gone quiet for 14+
 days — nudge on these), `unmatched_email_count` (if > 0, mention the
 review queue is waiting), and `countdowns` (AI-103 exam, program end, AWS
 credit runway).
 
-**Step 2 (optional): log a plan-time reflection or adjust a milestone.**
+**Step 2: push the day's recommendations.** Read the candidate pool, then
+POST 2-4 suggestions for the user to pick from in the "Plan" view.
+
+```bash
+# The pool: open ASCEND backlog items + open Notion Daily Board rows.
+curl -s "$BASE/api/today/pool/" -H "Authorization: Bearer $INGEST_TOKEN"
+
+# Replace today's recommendation set (bare array, idempotent to re-run).
+curl -X POST "$BASE/api/today/recommendations/" \
+  -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" \
+  -d '[
+    { "title": "Faithfulness metric — first pass", "rationale": "Unblocks the week-2 runner", "source_project": "case-intel" },
+    { "title": "AI-103 D2: function calling module", "rationale": "Weakest sub-topic on practice test 1", "source_project": "ai-103" }
+  ]'
+```
+
+`source_project` is `case-intel` / `ai-103` / `other`. The user checks off
+what they want in the app; ASCEND creates the `TodaySelection` rows — this
+task never writes selections directly.
+
+**Optionally** seed the backlog itself (ASCEND-native candidate work, so it
+shows in the pool):
+
+```bash
+curl -X POST "$BASE/api/ingest/" \
+  -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" \
+  -d '{ "backlog_items": [ { "title": "Wire the CI regression gate", "source_project": "case-intel" } ] }'
+```
+
+**Step 3 (optional): log a plan-time reflection or adjust a milestone.**
 
 ```bash
 curl -X POST "$BASE/api/ingest/" \
@@ -59,9 +89,6 @@ curl -X POST "$BASE/api/ingest/" \
     ]
   }'
 ```
-
-There is nothing else to POST at 10:00 in the common case — this task is
-mostly a `GET` that informs the plan you write out in chat.
 
 ---
 
