@@ -9,6 +9,7 @@ import datetime
 
 from core.models import (
     Application,
+    BacklogItem,
     Block,
     BlockEntry,
     CertDomain,
@@ -16,6 +17,7 @@ from core.models import (
     Countdown,
     Course,
     DailyLog,
+    DailyRecommendation,
     EmailEvent,
     LossPostmortem,
     Milestone,
@@ -26,6 +28,7 @@ from core.models import (
     Skill,
     SleepLog,
     StudySession,
+    TodaySelection,
 )
 
 
@@ -45,12 +48,48 @@ def make_block_entry(daily_log, block_code="B1", completed=True, **kwargs):
 
 
 def make_green_day(log_date, blocks_completed=4, **daily_log_kwargs):
-    """A DailyLog with `blocks_completed` of its 5 BlockEntry rows completed."""
+    """A DailyLog with `blocks_completed` of its 5 BlockEntry rows completed.
+    Legacy — the streak no longer counts blocks; see make_planned_day."""
     log = make_daily_log(log_date, **daily_log_kwargs)
     codes = ["B1", "B2", "B3", "B4", "B5"]
     for i, code in enumerate(codes):
         make_block_entry(log, block_code=code, completed=(i < blocks_completed))
     return log
+
+
+def make_today_selection(date, title="A task", source_type="adhoc", **kwargs):
+    defaults = dict(source_type=source_type, title=title)
+    defaults.update(kwargs)
+    return TodaySelection.objects.create(date=date, **defaults)
+
+
+def make_planned_day(date, planned=5, done=4, **selection_kwargs):
+    """`planned` TodaySelection rows for `date`, the first `done` of them
+    marked done. Used by the streak / green-day tests."""
+    rows = []
+    for i in range(planned):
+        rows.append(
+            make_today_selection(
+                date,
+                title=f"Task {i + 1}",
+                position=i + 1,
+                done=(i < done),
+                **selection_kwargs,
+            )
+        )
+    return rows
+
+
+def make_backlog_item(title="A backlog item", **kwargs):
+    defaults = dict(source_project="case-intel", status="pending")
+    defaults.update(kwargs)
+    return BacklogItem.objects.create(title=title, **defaults)
+
+
+def make_daily_recommendation(date, title="A recommendation", **kwargs):
+    defaults = dict(rationale="Because it matters", source_project="ai-103")
+    defaults.update(kwargs)
+    return DailyRecommendation.objects.create(date=date, title=title, **defaults)
 
 
 def make_application(company="Acme Corp", role="Backend Engineer", **kwargs):

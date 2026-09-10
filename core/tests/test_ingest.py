@@ -6,6 +6,7 @@ from rest_framework.exceptions import ValidationError
 from core.ingest import resolve_sleep_log_date, run_ingest, run_sleep_event_ingest
 from core.models import (
     Application,
+    BacklogItem,
     Course,
     DailyLog,
     EmailEvent,
@@ -147,6 +148,43 @@ class TestCourseAndSkillIngest:
                 {"courses": [{"name": "AI Agents Course", "progress_pct": 150}]},
                 owner,
             )
+
+
+class TestBacklogItemIngest:
+    def test_create_then_upsert_on_title(self, owner):
+        payload = {
+            "backlog_items": [
+                {"title": "Wire the CI eval gate", "source_project": "case-intel"}
+            ]
+        }
+        assert run_ingest(payload, owner)["backlog_items"] == {"created": 1, "updated": 0}
+        assert run_ingest(payload, owner)["backlog_items"] == {"created": 0, "updated": 1}
+
+        item = BacklogItem.objects.get(title="Wire the CI eval gate")
+        assert item.source_project == "case-intel"
+        assert item.status == "pending"
+        assert item.owner == owner
+
+    def test_status_moves_to_done_on_update(self, owner):
+        run_ingest({"backlog_items": [{"title": "Draft EVALUATION.md"}]}, owner)
+        run_ingest(
+            {"backlog_items": [{"title": "Draft EVALUATION.md", "status": "done"}]}, owner
+        )
+        assert BacklogItem.objects.get(title="Draft EVALUATION.md").status == "done"
+
+    def test_source_project_defaults_to_other(self, owner):
+        run_ingest({"backlog_items": [{"title": "Untagged task"}]}, owner)
+        assert BacklogItem.objects.get(title="Untagged task").source_project == "other"
+
+    def test_bad_source_project_is_400(self, owner):
+        with pytest.raises(ValidationError):
+            run_ingest(
+                {"backlog_items": [{"title": "x", "source_project": "ai-102"}]}, owner
+            )
+
+    def test_unknown_field_is_400(self, owner):
+        with pytest.raises(ValidationError):
+            run_ingest({"backlog_items": [{"title": "x", "priority": "high"}]}, owner)
 
 
 class TestMilestoneEvidenceGateViaIngest:

@@ -162,6 +162,17 @@ class CourseIngestSerializer(StrictFieldsMixin, serializers.Serializer):
     active = serializers.BooleanField(required=False)
 
 
+class BacklogItemIngestSerializer(StrictFieldsMixin, serializers.Serializer):
+    # Upsert on `title` (create-if-missing), like milestones/courses/skills.
+    # `source_project` defaults to "other" on a create if omitted; on an
+    # update an omitted field is left untouched.
+    title = serializers.CharField(max_length=300)
+    source_project = serializers.ChoiceField(
+        choices=["case-intel", "ai-103", "other"], required=False
+    )
+    status = serializers.ChoiceField(choices=["pending", "done"], required=False)
+
+
 class SkillIngestSerializer(StrictFieldsMixin, serializers.Serializer):
     # Upsert on `name` (create-if-missing). `level` is what changes; `target`
     # is a fixed goal that rarely moves but is accepted for the odd case it
@@ -199,6 +210,7 @@ INGEST_SERIALIZERS = {
     "activity_samples": ActivitySampleIngestSerializer,
     "courses": CourseIngestSerializer,
     "skills": SkillIngestSerializer,
+    "backlog_items": BacklogItemIngestSerializer,
 }
 
 
@@ -254,3 +266,48 @@ class BlockEntryUndoSerializer(StrictFieldsMixin, serializers.Serializer):
     StrictFieldsMixin turns any body content at all into a 400 "Unknown
     field", so a client can't sneak other field changes through it.
     """
+
+
+# --------------------------------------------------------------------------
+# Today planning — POST /api/today/recommendations/ and /selections/ both
+# take a bare JSON array; the views run these with many=True.
+# --------------------------------------------------------------------------
+
+class DailyRecommendationItemSerializer(StrictFieldsMixin, serializers.Serializer):
+    title = serializers.CharField(max_length=300)
+    rationale = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    source_project = serializers.ChoiceField(
+        choices=["case-intel", "ai-103", "other"], required=False
+    )
+
+
+class TodaySelectionItemSerializer(StrictFieldsMixin, serializers.Serializer):
+    source_type = serializers.ChoiceField(
+        choices=["backlog", "notion", "recommendation", "adhoc"]
+    )
+    source_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    title = serializers.CharField(max_length=300)
+
+    def validate(self, attrs):
+        if attrs["source_type"] == "adhoc":
+            if attrs.get("source_id") is not None:
+                raise serializers.ValidationError(
+                    {"source_id": "An adhoc selection has no source_id."}
+                )
+        elif attrs.get("source_id") is None:
+            raise serializers.ValidationError(
+                {"source_id": "Required for a non-adhoc selection."}
+            )
+        return attrs
+
+
+class TodaySelectionPatchSerializer(StrictFieldsMixin, serializers.Serializer):
+    """PATCH /api/today/selections/<id>/ — update time spent and/or done."""
+
+    minutes_spent = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    done = serializers.BooleanField(required=False)
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError("Provide minutes_spent and/or done.")
+        return attrs

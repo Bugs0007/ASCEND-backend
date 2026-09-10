@@ -14,7 +14,6 @@ from core.analytics import correlations, decay, funnel, streaks
 from core.constants import (
     DECAY_DAYS,
     GHOST_DAYS,
-    GREEN_DAY_BLOCK_THRESHOLD,
     MAX_OBSERVATIONS,
     MIN_DAYS_FOR_OBSERVATIONS,
 )
@@ -35,12 +34,12 @@ def compute(as_of=None):
     if streak > 0:
         observations.append(
             f"You're on a {streak}-day green streak "
-            f"(>= {GREEN_DAY_BLOCK_THRESHOLD} of 5 blocks completed)."
+            f"(most of each day's planned tasks done)."
         )
     else:
         observations.append(
-            f"No active green streak — the most recent day fell short of "
-            f"{GREEN_DAY_BLOCK_THRESHOLD} of 5 blocks completed."
+            "No active green streak — the most recent day fell short of its "
+            "planned tasks."
         )
 
     # 2. Last 7 days deep work vs program-wide average

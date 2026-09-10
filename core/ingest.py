@@ -7,9 +7,10 @@ practice_tests on (cert_code, taken_on) — exactly the four the spec names.
 Beyond those, this module extends the same idempotent spirit with keys that
 make sense for the resource (documented per-function below and in
 docs/INGEST_API.md): reflections on log_date, courses and skills on name,
-milestones on title, content_posts on url. Anything with no sensible
-natural key (study_sessions, activity_samples) supports an optional `id`
-field for explicit correction and otherwise always creates a new row.
+milestones and backlog_items on title, content_posts on url. Anything with
+no sensible natural key (study_sessions, activity_samples) supports an
+optional `id` field for explicit correction and otherwise always creates a
+new row.
 
 Every write goes through a model's own .save() — including the
 full_clean()-enforcing ones (Milestone, SleepLog, BlockEntry) — so a Django
@@ -26,6 +27,7 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 from core.models import (
     ActivitySample,
     Application,
+    BacklogItem,
     BlockEntry,
     CertDomain,
     ContentPost,
@@ -320,6 +322,15 @@ def _upsert_skill(data, owner):
     return created
 
 
+def _upsert_backlog_item(data, owner):
+    # Natural key: title. An unseen title creates a new row; a known one is
+    # updated in place (e.g. status -> done once the task is finished).
+    obj, created = _get_or_new(BacklogItem, {"title": data["title"]}, owner)
+    _apply_fields(obj, data, skip_fields={"title"})
+    _save(obj)
+    return created
+
+
 def _upsert_activity_sample(data, owner):
     data = dict(data)
     block_entry = _resolve_block_entry(data.pop("block_entry_id", None))
@@ -342,6 +353,7 @@ UPSERT_DISPATCH = {
     "activity_samples": _upsert_activity_sample,
     "courses": _upsert_course,
     "skills": _upsert_skill,
+    "backlog_items": _upsert_backlog_item,
 }
 
 

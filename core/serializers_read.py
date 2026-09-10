@@ -63,12 +63,23 @@ class DailyLogReadSerializer(serializers.ModelSerializer):
     # Same key set as views._serialize_daily_log (no `id`) — the /rhythm
     # heatmap and any other consumer get one consistent daily-log shape
     # whether it came from /api/today/ or this new list endpoint.
+    #
+    # `deep_work_total` is the computed sum of that date's TodaySelection
+    # minutes_spent — the replacement for the deprecated single-field
+    # `deep_work_minutes` quick-log. It's an annotation on the list queryset
+    # (DailyLogListView.get_queryset); the getattr fallback keeps a row
+    # serialized outside that view at 0 rather than erroring.
+    deep_work_total = serializers.SerializerMethodField()
+
     class Meta:
         model = DailyLog
         fields = [
-            "log_date", "deep_work_minutes", "energy", "steps_after_10",
-            "gym", "last_caffeine_at", "mood", "notes",
+            "log_date", "deep_work_minutes", "deep_work_total", "energy",
+            "steps_after_10", "gym", "last_caffeine_at", "mood", "notes",
         ]
+
+    def get_deep_work_total(self, obj):
+        return getattr(obj, "deep_work_total", 0) or 0
 
 
 class SkillReadSerializer(serializers.ModelSerializer):

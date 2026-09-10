@@ -22,7 +22,7 @@ for local testing.
 ## POST /api/ingest/
 
 Body: a JSON object keyed by resource type, each value a **list** of rows.
-You can post one resource type or all thirteen in a single call.
+You can post one resource type or all fourteen in a single call.
 
 ```json
 {
@@ -60,6 +60,7 @@ The response is a per-resource created/updated tally:
 | `milestones` | `title` | `id` takes priority when given (see below). `project_code`/`phase_no` only ever *set* the project/phase — they never narrow the lookup, so omitting them on an update can't detach an existing link. |
 | `courses` | `name` | Matches a seeded `Course.name`; an unseen name creates a new row. |
 | `skills` | `name` | Matches a seeded `Skill.name`; an unseen name creates a new row. |
+| `backlog_items` | `title` | ASCEND-native candidate work for the "Plan" view's pool. An unseen title creates a new row. |
 | `study_sessions` | none | Always creates unless `id` is given. |
 | `activity_samples` | none | Append-only; nothing writes here in v1. |
 
@@ -245,6 +246,25 @@ curl -X POST "$BASE/api/ingest/" \
   -d '{"skills": [{"name": "RAG and retrieval", "level": 55}]}'
 ```
 
+#### `backlog_items`
+
+```json
+{ "title": "Wire the CI regression gate", "source_project": "case-intel", "status": "pending" }
+```
+ASCEND-native candidate work — project/cert tasks that aren't on the Notion
+job-search board. Upsert on `title`. `source_project` is one of
+`case-intel`, `ai-103`, `other` (defaults to `other` if omitted on a
+create); `status` is `pending` or `done` (defaults to `pending`). Pending
+rows show up in `GET /api/today/pool/` for the "Plan" view; flip a row to
+`done` once it's finished so it drops out of the pool. Both fields optional
+on an update — send only what changed.
+
+```bash
+curl -X POST "$BASE/api/ingest/" \
+  -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" \
+  -d '{"backlog_items": [{"title": "Wire the CI regression gate", "source_project": "case-intel"}]}'
+```
+
 ---
 
 ## POST /api/ingest/sleep/
@@ -292,7 +312,12 @@ Once the program has started:
 {
   "status": "active", "today": "2026-09-08",
   "daily_log": { "...": "..." },
-  "blocks": [ { "code": "B1", "label": "BUILD", "completed": false, "started_at": null, "elapsed_minutes": null } ],
+  "deep_work_total": 175,
+  "today_selections": [
+    { "id": 12, "date": "2026-09-08", "source_type": "backlog", "source_id": 3,
+      "title": "Wire the CI regression gate", "block": null,
+      "minutes_spent": 90, "done": true, "position": 1 }
+  ],
   "streak": 3,
   "open_milestones": [ "..." ],
   "shippable_milestones": [ "..." ],
@@ -301,6 +326,13 @@ Once the program has started:
   "countdowns": [ "..." ]
 }
 ```
+
+`today_selections` is the day's task list — an ordered list of any length
+(see the "Today planning" section below). The old fixed `blocks` array is
+gone. `deep_work_total` is the computed sum of that day's
+`today_selections[].minutes_spent` — the replacement for the deprecated
+single `daily_log.deep_work_minutes` quick-log field (which is still
+present and still writable via `daily_logs` ingest for now).
 
 ```bash
 curl "$BASE/api/today/" -H "Authorization: Bearer $INGEST_TOKEN"
@@ -314,6 +346,71 @@ or your own user token.
 ```bash
 curl "$BASE/api/email-queue/" -H "Authorization: Bearer $INGEST_TOKEN"
 ```
+
+---
+
+## Today planning
+
+The day's work is a list of **`TodaySelection`** rows of any length,
+replacing the old fixed five blocks. The user builds it in the "Plan" view
+each morning (and can add to it all day) from two candidate lists — the
+**pool** (open backlog + open Notion board rows) and the day's
+**recommendations** (pushed here by the Morning Brief task).
+
+### GET /api/today/pool/ — machine or user token
+
+The candidate pool: pending `BacklogItem` rows merged with **open** Notion
+"Daily Board" rows (status not `done`/`complete`/`shipped`/`closed`/`archived`,
+case-insensitive), each tagged with its `source`.
+
+```json
+{
+  "count": 2,
+  "results": [
+    { "source": "backlog", "source_id": 3, "title": "Wire the CI regression gate", "source_project": "case-intel" },
+    { "source": "notion", "source_id": 12, "title": "Apply to 5 openings", "status": "To Do", "category": "Job search", "due_date": "2026-09-10" }
+  ]
+}
+```
+
+### GET /api/today/recommendations/?date=YYYY-MM-DD — machine or user token
+
+The day's suggestions (`date` defaults to today).
+
+```json
+{ "date": "2026-09-10", "results": [ { "id": 4, "title": "...", "rationale": "...", "source_project": "ai-103", "date": "2026-09-10" } ] }
+```
+
+### POST /api/today/recommendations/ — machine or user token
+
+Body is a **bare JSON array** of `{title, rationale, source_project}`. It
+**replaces** today's recommendation set (so the Morning Brief task can
+re-run idempotently). `source_project` is `case-intel` / `ai-103` / `other`
+(optional, defaults `other`); `rationale` optional. At least one item, or
+400.
+
+```bash
+curl -X POST "$BASE/api/today/recommendations/" \
+  -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" \
+  -d '[
+    {"title": "Faithfulness metric — first pass", "rationale": "Unblocks the week-2 runner", "source_project": "case-intel"},
+    {"title": "AI-103 D2: function calling module", "rationale": "Weakest sub-topic on practice test 1", "source_project": "ai-103"}
+  ]'
+```
+
+### Selections — your own user token only
+
+The live UI writes these; the machine path does not.
+
+- **GET /api/today/selections/?date=** — the day's list, ordered by `position`.
+- **POST /api/today/selections/** — bare array of `{source_type, source_id, title}`.
+  `source_type` is `backlog` / `notion` / `recommendation` / `adhoc`;
+  `source_id` is the pool/recommendation row id (omit for `adhoc`, which
+  carries only its `title`). **Appends** to today's list; re-submitting a
+  non-adhoc row that's already selected is a no-op, not a duplicate.
+- **PATCH /api/today/selections/&lt;id&gt;/** — `{"minutes_spent": 45}` and/or
+  `{"done": true}`. Any other key is a 400.
+- **DELETE /api/today/selections/&lt;id&gt;/** — remove a mis-added row.
 
 ---
 

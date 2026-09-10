@@ -9,8 +9,16 @@ PROGRAM_START = datetime.date(2026, 9, 7)   # Day 1, PROVE begins
 PROGRAM_END = datetime.date(2026, 12, 13)   # End of CONVERT / week 13 buffer
 PROGRAM_TOTAL_WEEKS = 13
 
-# --- Blocks / green day ---
-# A day is "green" once at least this many of the 5 blocks are completed.
+# --- Green day / streak ---
+# A day is "green" once at least ceil(planned * NUMERATOR / DENOMINATOR) of
+# that day's TodaySelection tasks are done, with a minimum of one planned
+# task. Replaces the old fixed "4 of 5 blocks" rule now that a day's task
+# list is any length. ceil(n * 2 / 3): 1->1, 2->2, 3->2, 4->3, 5->4 (the old
+# bar), 6->4. See core/analytics/streaks.py.
+GREEN_DAY_DONE_NUMERATOR = 2
+GREEN_DAY_DONE_DENOMINATOR = 3
+# Legacy: the BlockEntry-era green-day bar. The block model is retained but no
+# longer drives the streak; kept here only so nothing importing it breaks.
 GREEN_DAY_BLOCK_THRESHOLD = 4
 
 # --- Steps target (DailyLog.steps_after_10) ---
