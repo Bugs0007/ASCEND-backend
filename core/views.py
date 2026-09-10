@@ -9,11 +9,13 @@ All API views. Two authentication code paths, deliberately separate:
 """
 import django_filters
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import authentication, generics, permissions
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -44,6 +46,7 @@ from core.serializers import (
     CountdownPatchSerializer,
     NotionTaskStatusPatchSerializer,
     SleepEventSerializer,
+    SleepLogPatchSerializer,
 )
 from core.serializers_read import (
     ApplicationReadSerializer,
@@ -511,6 +514,35 @@ class BlockEntryDetailView(APIView):
         entry.ended_at = None
         entry.save()
         return Response(_serialize_block_entry(entry))
+
+
+class SleepLogDetailView(APIView):
+    """Correct the bed/wake time on a SleepLog row the frontend is already
+    showing (the "fix" control on TODAY's "Last night" panel). Targets the
+    row by id — POST /api/ingest/sleep/ can't be used for this because it
+    re-derives log_date from the submitted time (before-noon -> previous
+    day), which drops a morning correction onto the *previous* night's row
+    whenever the displayed night runs past midnight."""
+
+    authentication_classes = [authentication.TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, pk):
+        sleep = get_object_or_404(
+            _owned_or_shared(SleepLog.objects.all(), request.user), pk=pk
+        )
+        serializer = SleepLogPatchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        for field, value in serializer.validated_data.items():
+            setattr(sleep, field, value)
+        try:
+            # SleepLog.save() runs full_clean() (wake_at must be after bed_at)
+            # and recomputes `hours` from the pair.
+            sleep.save()
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
+            raise DRFValidationError(detail)
+        return Response(SleepLogReadSerializer(sleep).data)
 
 
 # --------------------------------------------------------------------------

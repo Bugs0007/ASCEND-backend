@@ -1,8 +1,12 @@
+import datetime
+
 import pytest
 
 from core.constants import PROGRAM_START
 
 pytestmark = pytest.mark.django_db
+
+IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 
 class TestHealth:
@@ -223,4 +227,74 @@ class TestBlockEntryUndo:
 
     def test_undo_requires_auth(self, api_client):
         resp = api_client.patch("/api/block-entries/1/", {}, format="json")
+        assert resp.status_code == 401
+
+
+class TestSleepLogPatch:
+    """PATCH /api/sleep-logs/<id>/ — the fix control on TODAY's sleep panel.
+    Edits the row it's shown by id; never re-derives the night."""
+
+    def _rows(self):
+        from core.tests.factories import make_sleep_log
+
+        # The night whose panel log_date (Sep 8) sits one day behind the wall
+        # clock of its own bed/wake events (both Sep 9) — the exact shape that
+        # made a morning correction via /api/ingest/sleep/ mis-file onto Sep 7.
+        target = make_sleep_log(
+            datetime.date(2026, 9, 8),
+            bed_at=datetime.datetime(2026, 9, 9, 0, 4, tzinfo=IST),
+            wake_at=datetime.datetime(2026, 9, 9, 11, 57, tzinfo=IST),
+            source="shortcut",
+        )
+        neighbour = make_sleep_log(
+            datetime.date(2026, 9, 7),
+            bed_at=datetime.datetime(2026, 9, 7, 23, 16, tzinfo=IST),
+            wake_at=datetime.datetime(2026, 9, 8, 8, 15, tzinfo=IST),
+            source="shortcut",
+        )
+        return target, neighbour
+
+    def test_patch_edits_that_row_recomputes_hours_leaves_neighbour_alone(self, auth_client):
+        target, neighbour = self._rows()
+        neighbour_wake = neighbour.wake_at
+
+        resp = auth_client.patch(
+            f"/api/sleep-logs/{target.id}/",
+            {"wake_at": "2026-09-09T08:15:00+05:30"},
+            format="json",
+        )
+        assert resp.status_code == 200
+        assert resp.data["log_date"] == "2026-09-08"
+
+        target.refresh_from_db()
+        neighbour.refresh_from_db()
+        assert target.wake_at == datetime.datetime(2026, 9, 9, 8, 15, tzinfo=IST)
+        assert float(target.hours) == pytest.approx(8.18, abs=0.02)
+        assert neighbour.wake_at == neighbour_wake  # untouched
+
+    def test_patch_rejects_wake_before_bed(self, auth_client):
+        target, _ = self._rows()
+        resp = auth_client.patch(
+            f"/api/sleep-logs/{target.id}/",
+            {"wake_at": "2026-09-08T08:15:00+05:30"},  # before the Sep 9 00:04 bed
+            format="json",
+        )
+        assert resp.status_code == 400
+
+    def test_patch_rejects_empty_body(self, auth_client):
+        target, _ = self._rows()
+        resp = auth_client.patch(f"/api/sleep-logs/{target.id}/", {}, format="json")
+        assert resp.status_code == 400
+
+    def test_patch_rejects_unknown_field(self, auth_client):
+        target, _ = self._rows()
+        resp = auth_client.patch(
+            f"/api/sleep-logs/{target.id}/", {"source": "manual"}, format="json"
+        )
+        assert resp.status_code == 400
+
+    def test_patch_requires_auth(self, api_client):
+        resp = api_client.patch(
+            "/api/sleep-logs/1/", {"wake_at": "2026-09-09T08:15:00+05:30"}, format="json"
+        )
         assert resp.status_code == 401

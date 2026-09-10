@@ -261,6 +261,11 @@ time-of-day before noon belongs to the *previous* calendar day's
 00:47) and the following morning's wake (e.g. 06:30) on the **same** row.
 `source` is always set to `"shortcut"`.
 
+This re-derivation is right for a raw Shortcut event but wrong for
+*editing a row a UI is already showing*: a morning time would resolve to
+the previous night's row. To correct the bed/wake time on a known row, use
+`PATCH /api/sleep-logs/<id>/` (below), which targets the row by id.
+
 ```bash
 curl -X POST "$BASE/api/ingest/sleep/" \
   -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" \
@@ -352,12 +357,23 @@ curl "$BASE/api/daily-logs/?log_date__gte=2026-09-01&log_date__lte=2026-09-30" \
 `ended_at`/`elapsed_minutes`, but leaves `started_at` alone — the block goes
 back to "in progress", not "never started". Safe to call twice.
 
+**`PATCH /api/sleep-logs/<id>/`** — correct the `bed_at` and/or `wake_at` on
+one existing row (the "fix" control on TODAY's "Last night" panel). At least
+one of the two required; any other key is a 400. `wake_at` must be after
+`bed_at` (else 400) and `hours` is recomputed. Unlike
+`POST /api/ingest/sleep/`, this does **not** re-derive `log_date` from the
+time you pass — the id in the URL is the row. Use the event endpoint for a
+raw Shortcut bed/wake; use this to fix a row the UI is already showing.
+
 ```bash
 curl -X PATCH "$BASE/api/countdowns/2/" -H "Authorization: Token $USER_TOKEN" \
   -H "Content-Type: application/json" -d '{"target_date": "2026-11-15"}'
 
 curl -X PATCH "$BASE/api/block-entries/17/" -H "Authorization: Token $USER_TOKEN" \
   -H "Content-Type: application/json" -d '{}'
+
+curl -X PATCH "$BASE/api/sleep-logs/5/" -H "Authorization: Token $USER_TOKEN" \
+  -H "Content-Type: application/json" -d '{"wake_at": "2026-09-09T08:15:00+05:30"}'
 ```
 
 **`PATCH /api/notion-tasks/<id>/`** — `{"status": "<new status>"}` writes a

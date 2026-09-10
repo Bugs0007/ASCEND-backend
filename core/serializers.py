@@ -229,6 +229,24 @@ class NotionTaskStatusPatchSerializer(StrictFieldsMixin, serializers.Serializer)
     status = serializers.CharField(max_length=100)
 
 
+class SleepLogPatchSerializer(StrictFieldsMixin, serializers.Serializer):
+    """PATCH /api/sleep-logs/<id>/ — correct the bed/wake time on a row the
+    frontend is *already showing*. Unlike POST /api/ingest/sleep/, this never
+    re-derives which night the row belongs to: the id in the URL is the row,
+    full stop. `resolve_sleep_log_date`'s before-noon-means-previous-day rule
+    is right for a raw Shortcut event but wrong for editing a displayed row —
+    it would land the edit on the adjacent night. At least one field required;
+    `wake_at > bed_at` and the `hours` recompute are enforced by the model."""
+
+    bed_at = serializers.DateTimeField(required=False, allow_null=True)
+    wake_at = serializers.DateTimeField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError("Provide bed_at and/or wake_at.")
+        return attrs
+
+
 class BlockEntryUndoSerializer(StrictFieldsMixin, serializers.Serializer):
     """
     Zero declared fields, deliberately: this endpoint is one well-known
