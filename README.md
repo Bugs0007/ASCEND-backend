@@ -1,7 +1,7 @@
 # ASCEND backend
 
 Backend for **ASCEND**, a single-user personal progress console tracking a
-90-day job-search / AI-engineering program (**2026-09-07 → 2026-12-13**).
+90-day job-search / AI-engineering program (**2026-09-11 → 2026-12-17**).
 Django 5.2 + DRF, plain-Python analytics (no numpy/pandas), Postgres on
 Neon, hosted free on Render.
 
