@@ -42,6 +42,8 @@ urlpatterns = [
     path("analytics/observations/", views.ObservationsView.as_view(), name="analytics-observations"),
     # --- Read endpoints (human token only) ---
     path("applications/", views.ApplicationListView.as_view(), name="applications"),
+    path("applications/<int:pk>/", views.ApplicationDetailView.as_view(), name="application-detail"),
+    path("linkedin-snapshots/", views.LinkedInSnapshotListView.as_view(), name="linkedin-snapshots"),
     path("milestones/", views.MilestoneListView.as_view(), name="milestones-list"),
     path("sleep-logs/", views.SleepLogListView.as_view(), name="sleep-logs"),
     path("daily-logs/", views.DailyLogListView.as_view(), name="daily-logs"),

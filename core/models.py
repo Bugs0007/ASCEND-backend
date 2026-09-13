@@ -459,15 +459,38 @@ class Application(BaseModel):
         REJECTED = "rejected", "Rejected"
         GHOSTED = "ghosted", "Ghosted (manually marked)"
 
+    class Channel(models.TextChoices):
+        LINKEDIN_EASY_APPLY = "linkedin_easy_apply", "LinkedIn Easy Apply"
+        CUTSHORT = "cutshort", "Cutshort"
+        CAREERS_PAGE = "careers_page", "Company careers page"
+        NAUKRI = "naukri", "Naukri"
+        OTHER = "other", "Other"
+
+    class HeardBack(models.TextChoices):
+        PENDING = "pending", "Pending"
+        YES = "yes", "Yes"
+        NO = "no", "No"
+
     # Stages counted as "in flight" for the computed 21-day ghost rule.
     # Deliberately excludes offer/rejected/ghosted — those are resolved.
     IN_FLIGHT_STAGES = {Stage.APPLIED, Stage.SCREEN, Stage.OA, Stage.TECH, Stage.FINAL}
 
     company = models.CharField(max_length=200)
     role = models.CharField(max_length=200)
+    # `source` is HOW you got in (referral vs cold portal vs outreach) and
+    # drives the funnel's interview-rate-per-source; `channel` is WHERE you
+    # clicked apply. Orthogonal — a referral can still go through a careers
+    # page. The quick-add path only asks for a channel and derives `source`
+    # from core.constants.CHANNEL_DEFAULT_SOURCE. Blank = not recorded (rows
+    # that predate this field, or ingest payloads that omit it).
     source = models.CharField(max_length=10, choices=Source.choices)
+    channel = models.CharField(max_length=20, choices=Channel.choices, blank=True)
     applied_on = models.DateField()
     stage = models.CharField(max_length=10, choices=Stage.choices, default=Stage.APPLIED)
+    # A quick yes/no/pending flag, deliberately independent of `stage`: it
+    # never moves the stage or `last_update` (so it never touches the ghost
+    # rule) — stage changes stay the pipeline-movement path.
+    heard_back = models.CharField(max_length=7, choices=HeardBack.choices, default=HeardBack.PENDING)
     last_update = models.DateField()
     last_email_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True)
@@ -591,6 +614,26 @@ class ContentPost(BaseModel):
 
     def __str__(self):
         return self.title
+
+
+class LinkedInSnapshot(BaseModel):
+    """Account-level LinkedIn numbers on one day, logged by hand — there's no
+    practical API for personal post analytics, so nothing fetches these.
+    Distinct from ContentPost (one row per post): this is the time series
+    behind the dashboard's impressions/connections trend. One row per day;
+    POST /api/linkedin-snapshots/ upserts on log_date."""
+
+    log_date = models.DateField(unique=True)
+    post_impressions = models.PositiveIntegerField()
+    post_likes = models.PositiveIntegerField()
+    connections = models.PositiveIntegerField()
+    note = models.CharField(max_length=200, blank=True)  # e.g. which post
+
+    class Meta:
+        ordering = ["-log_date"]
+
+    def __str__(self):
+        return f"LinkedIn {self.log_date}"
 
 
 class Skill(BaseModel):

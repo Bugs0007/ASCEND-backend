@@ -59,10 +59,16 @@ class StudySessionIngestSerializer(StrictFieldsMixin, serializers.Serializer):
     course_name = serializers.CharField(required=False, allow_blank=True, max_length=200)
 
 
+APPLICATION_CHANNELS = ["linkedin_easy_apply", "cutshort", "careers_page", "naukri", "other"]
+APPLICATION_HEARD_BACK = ["pending", "yes", "no"]
+
+
 class ApplicationIngestSerializer(StrictFieldsMixin, serializers.Serializer):
     company = serializers.CharField(max_length=200)
     role = serializers.CharField(max_length=200)
     source = serializers.ChoiceField(choices=["referral", "direct", "portal", "outreach"])
+    channel = serializers.ChoiceField(choices=APPLICATION_CHANNELS, required=False, allow_blank=True)
+    heard_back = serializers.ChoiceField(choices=APPLICATION_HEARD_BACK, required=False)
     applied_on = serializers.DateField()
     stage = serializers.ChoiceField(
         choices=["applied", "screen", "oa", "tech", "final", "offer", "rejected", "ghosted"],
@@ -257,6 +263,37 @@ class SleepLogPatchSerializer(StrictFieldsMixin, serializers.Serializer):
         if not attrs:
             raise serializers.ValidationError("Provide bed_at and/or wake_at.")
         return attrs
+
+
+class ApplicationQuickAddSerializer(StrictFieldsMixin, serializers.Serializer):
+    """POST /api/applications/ — the /board quick-add row. Company, role and
+    channel are all it asks for; `applied_on` defaults to today, `source` is
+    derived from the channel (core.constants.CHANNEL_DEFAULT_SOURCE), stage
+    starts at applied. Human token, not ingest — this is a live UI write."""
+
+    company = serializers.CharField(max_length=200)
+    role = serializers.CharField(max_length=200)
+    channel = serializers.ChoiceField(choices=APPLICATION_CHANNELS)
+    applied_on = serializers.DateField(required=False)
+    heard_back = serializers.ChoiceField(choices=APPLICATION_HEARD_BACK, required=False)
+
+
+class ApplicationHeardBackPatchSerializer(StrictFieldsMixin, serializers.Serializer):
+    """PATCH /api/applications/<id>/ — the one quick flag. Stage edits keep
+    going through the ingest upsert (they also stamp last_update)."""
+
+    heard_back = serializers.ChoiceField(choices=APPLICATION_HEARD_BACK)
+
+
+class LinkedInSnapshotWriteSerializer(StrictFieldsMixin, serializers.Serializer):
+    """POST /api/linkedin-snapshots/ — upsert one day's numbers. `log_date`
+    defaults to today; re-posting a date overwrites that day's row."""
+
+    log_date = serializers.DateField(required=False)
+    post_impressions = serializers.IntegerField(min_value=0)
+    post_likes = serializers.IntegerField(min_value=0)
+    connections = serializers.IntegerField(min_value=0)
+    note = serializers.CharField(required=False, allow_blank=True, max_length=200)
 
 
 class BlockEntryUndoSerializer(StrictFieldsMixin, serializers.Serializer):

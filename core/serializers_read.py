@@ -19,6 +19,7 @@ from core.models import (
     ContentPost,
     Course,
     DailyLog,
+    LinkedInSnapshot,
     Milestone,
     NotionTask,
     Reflection,
@@ -31,8 +32,9 @@ class ApplicationReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Application
         fields = [
-            "id", "company", "role", "source", "applied_on", "stage",
-            "last_update", "last_email_at", "notes", "contact", "company_domain",
+            "id", "company", "role", "source", "channel", "applied_on", "stage",
+            "heard_back", "last_update", "last_email_at", "notes", "contact",
+            "company_domain",
         ]
 
 
@@ -110,6 +112,12 @@ class ContentPostReadSerializer(serializers.ModelSerializer):
             "id", "platform", "title", "url", "posted_on",
             "impressions", "reactions", "comments", "milestone",
         ]
+
+
+class LinkedInSnapshotReadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LinkedInSnapshot
+        fields = ["id", "log_date", "post_impressions", "post_likes", "connections", "note"]
 
 
 class ReflectionReadSerializer(serializers.ModelSerializer):

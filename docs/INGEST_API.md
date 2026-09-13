@@ -122,6 +122,13 @@ previously-ingested row.
 below compares against the sender's domain — set it so replies get
 matched automatically.
 
+Two optional fields, both left untouched on an update when omitted:
+`channel` — where you clicked apply: `linkedin_easy_apply` / `cutshort` /
+`careers_page` / `naukri` / `other` (or `""`); orthogonal to `source`, which
+stays the funnel's referral/direct/portal/outreach bucket — and
+`heard_back` — `pending` (default) / `yes` / `no`, a quick flag that never
+moves `stage` or `last_update`.
+
 ```bash
 curl -X POST "$BASE/api/ingest/" \
   -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" \
@@ -422,7 +429,7 @@ data, not the machine ingest path.
 
 | Endpoint | Filters | Ordering |
 |---|---|---|
-| `GET /api/applications/` | `?stage=`, `?source=` | `last_update` (default, newest first), `applied_on`, `company` |
+| `GET /api/applications/` | `?stage=`, `?source=`, `?channel=`, `?heard_back=`, `?applied_on=` (+ `__gte` / `__lte`) | `last_update` (default, newest first), `applied_on`, `company`, `id` |
 | `GET /api/milestones/` | `?status=`, `?project=` (project **code**, e.g. `A`) | `due_date` (default), `title` |
 | `GET /api/sleep-logs/` | `?log_date__gte=`, `?log_date__lte=` | `log_date` (default, newest first) |
 | `GET /api/daily-logs/` | `?log_date__gte=`, `?log_date__lte=` | `log_date` (default, newest first) |
@@ -432,6 +439,7 @@ data, not the machine ingest path.
 | `GET /api/content-posts/` | — | `posted_on` (default, newest first) |
 | `GET /api/reflections/` | `?log_date__gte=`, `?log_date__lte=` | `log_date` (default, newest first) |
 | `GET /api/notion-tasks/` | `?status=` | `due_date`, `notion_last_edited` |
+| `GET /api/linkedin-snapshots/` | `?log_date__gte=`, `?log_date__lte=` | `log_date` (default, newest first) |
 
 Every list is paginated (`{"count", "next", "previous", "results"}`, 50 per
 page) and scoped to you — a row someone else owns, or that has no owner at
@@ -443,6 +451,38 @@ shows up. Sort ascending/descending with `?ordering=field` /
 curl "$BASE/api/applications/?stage=offer" -H "Authorization: Token $USER_TOKEN"
 curl "$BASE/api/daily-logs/?log_date__gte=2026-09-01&log_date__lte=2026-09-30" \
   -H "Authorization: Token $USER_TOKEN"
+```
+
+**`POST /api/applications/`** — the `/board` quick-add:
+`{"company", "role", "channel"}`, optional `applied_on` (defaults to today;
+a future date is a 400). `source` is derived from the channel
+(`core.constants.CHANNEL_DEFAULT_SOURCE`: job boards → `portal`, careers page
+/ other → `direct`), `stage` starts at `applied`, `last_update` = `applied_on`.
+A `(company, role)` pair that already exists — matched case-insensitively —
+is a 400 `"Already logged: …"`, never a second row. `201` with the row.
+
+**`PATCH /api/applications/<id>/`** — `{"heard_back": "yes"}` (`pending` /
+`yes` / `no`). Only that field changes — not `stage`, not `last_update`, so
+the ghost rule is unaffected. Any other key is a 400.
+
+**`POST /api/linkedin-snapshots/`** — `{"post_impressions", "post_likes",
+"connections"}` (non-negative integers, all required), optional `note` (≤200
+chars) and `log_date` (defaults to today; future is a 400). Upserts on
+`log_date`: `201` for a new day, `200` when it overwrote that day's numbers
+(an omitted `note` keeps the stored one). Manual entry only — nothing
+fetches LinkedIn analytics.
+
+`GET /api/today/` also carries `applications_today` (rows with
+`applied_on` = today) and `applications_total` for the dashboard tiles.
+
+```bash
+curl -X POST "$BASE/api/applications/" -H "Authorization: Token $USER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"company": "Rehlat", "role": "Python Developer", "channel": "linkedin_easy_apply"}'
+
+curl -X POST "$BASE/api/linkedin-snapshots/" -H "Authorization: Token $USER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"post_impressions": 670, "post_likes": 30, "connections": 492, "note": "Café Cursor meetup post"}'
 ```
 
 **`PATCH /api/countdowns/<id>/`** — `{"target_date": "2026-11-15"}` (or
