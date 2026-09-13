@@ -27,7 +27,7 @@ from rest_framework.views import APIView
 
 from core.analytics import activity, burnup, certtrend, correlations, decay, funnel, losses, observations, rhythm, streaks
 from core.auth import IngestTokenAuthentication
-from core.constants import PROGRAM_START
+from core.constants import CHANNEL_DEFAULT_SOURCE, PROGRAM_START
 from core.ingest import run_ingest, run_sleep_event_ingest
 from core.models import (
     Application,
@@ -41,6 +41,7 @@ from core.models import (
     DailyLog,
     DailyRecommendation,
     EmailEvent,
+    LinkedInSnapshot,
     Milestone,
     NotionTask,
     Reflection,
@@ -51,9 +52,12 @@ from core.models import (
 )
 from core import notion_sync
 from core.serializers import (
+    ApplicationHeardBackPatchSerializer,
+    ApplicationQuickAddSerializer,
     BlockEntryUndoSerializer,
     CountdownPatchSerializer,
     DailyRecommendationItemSerializer,
+    LinkedInSnapshotWriteSerializer,
     NotionTaskStatusPatchSerializer,
     SleepEventSerializer,
     SleepLogPatchSerializer,
@@ -66,6 +70,7 @@ from core.serializers_read import (
     ContentPostReadSerializer,
     CourseReadSerializer,
     DailyLogReadSerializer,
+    LinkedInSnapshotReadSerializer,
     MilestoneReadSerializer,
     NotionTaskReadSerializer,
     ReflectionReadSerializer,
@@ -270,6 +275,9 @@ class TodayView(APIView):
                 "shippable_milestones": [_serialize_milestone(m) for m in shippable_milestones],
                 "decay_alerts": decay.compute(as_of=today),
                 "unmatched_email_count": EmailEvent.objects.filter(matched=False).count(),
+                # Headline job-search figures for the dashboard tiles.
+                "applications_today": Application.objects.filter(applied_on=today).count(),
+                "applications_total": Application.objects.count(),
                 "countdowns": countdowns,
             }
         )
@@ -446,11 +454,57 @@ class MilestoneFilterSet(django_filters.FilterSet):
 
 
 class ApplicationListView(OwnerScopedListAPIView):
+    """GET — list. POST — the /board quick-add (company + role + channel).
+    POST lives on the list view rather than going through ingest because it's
+    a live UI write taking the user's own token, like /api/today/selections/."""
+
     queryset = Application.objects.all()
     serializer_class = ApplicationReadSerializer
-    filterset_fields = ["stage", "source"]
-    ordering_fields = ["last_update", "applied_on", "company"]
+    filterset_fields = {
+        "stage": ["exact"],
+        "source": ["exact"],
+        "channel": ["exact"],
+        "heard_back": ["exact"],
+        "applied_on": ["exact", "gte", "lte"],
+    }
+    ordering_fields = ["last_update", "applied_on", "company", "id"]
     ordering = ["-last_update"]
+
+    def post(self, request):
+        serializer = ApplicationQuickAddSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        today = timezone.localdate()
+        applied_on = data.get("applied_on") or today
+        if applied_on > today:
+            raise DRFValidationError({"applied_on": "Can't be in the future."})
+
+        # (company, role) is the table's unique key. Match it case-insensitively
+        # here so a fast re-type of "rehlat" doesn't become a second Rehlat row
+        # (or a raw IntegrityError on an exact repeat).
+        existing = Application.objects.filter(
+            company__iexact=data["company"], role__iexact=data["role"]
+        ).first()
+        if existing is not None:
+            raise DRFValidationError(
+                {
+                    "detail": f"Already logged: {existing.company} — {existing.role} "
+                    f"(applied {existing.applied_on:%d %b})."
+                }
+            )
+
+        application = Application.objects.create(
+            owner=request.user,
+            company=data["company"],
+            role=data["role"],
+            channel=data["channel"],
+            source=CHANNEL_DEFAULT_SOURCE[data["channel"]],
+            applied_on=applied_on,
+            last_update=applied_on,
+            heard_back=data.get("heard_back", Application.HeardBack.PENDING),
+        )
+        return Response(ApplicationReadSerializer(application).data, status=201)
 
 
 class MilestoneListView(OwnerScopedListAPIView):
@@ -518,6 +572,39 @@ class ContentPostListView(OwnerScopedListAPIView):
     ordering = ["-posted_on"]
 
 
+class LinkedInSnapshotListView(OwnerScopedListAPIView):
+    """GET — the manual LinkedIn snapshots, newest first (the dashboard trend
+    asks for ?ordering=log_date). POST — upsert one day's numbers on
+    log_date: 201 when the day is new, 200 when it overwrote that day's row."""
+
+    queryset = LinkedInSnapshot.objects.all()
+    serializer_class = LinkedInSnapshotReadSerializer
+    filterset_fields = {"log_date": ["gte", "lte"]}
+    ordering_fields = ["log_date"]
+    ordering = ["-log_date"]
+
+    def post(self, request):
+        serializer = LinkedInSnapshotWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = dict(serializer.validated_data)
+
+        today = timezone.localdate()
+        log_date = data.pop("log_date", None) or today
+        if log_date > today:
+            raise DRFValidationError({"log_date": "Can't be in the future."})
+
+        snapshot, created = LinkedInSnapshot.objects.get_or_create(
+            log_date=log_date, defaults={"owner": request.user, **data}
+        )
+        if not created:
+            for field, value in data.items():
+                setattr(snapshot, field, value)
+            snapshot.save()
+        return Response(
+            LinkedInSnapshotReadSerializer(snapshot).data, status=201 if created else 200
+        )
+
+
 class ReflectionListView(OwnerScopedListAPIView):
     queryset = Reflection.objects.all()
     serializer_class = ReflectionReadSerializer
@@ -573,6 +660,24 @@ class BlockEntryDetailView(APIView):
         entry.ended_at = None
         entry.save()
         return Response(_serialize_block_entry(entry))
+
+
+class ApplicationDetailView(APIView):
+    """PATCH {heard_back} — flip the yes/no/pending flag from the /board list.
+    Deliberately touches nothing else: not stage, not last_update."""
+
+    authentication_classes = [authentication.TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, pk):
+        application = get_object_or_404(
+            _owned_or_shared(Application.objects.all(), request.user), pk=pk
+        )
+        serializer = ApplicationHeardBackPatchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        application.heard_back = serializer.validated_data["heard_back"]
+        application.save(update_fields=["heard_back", "updated_at"])
+        return Response(ApplicationReadSerializer(application).data)
 
 
 class SleepLogDetailView(APIView):

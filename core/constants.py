@@ -43,6 +43,17 @@ INTERVIEW_STAGES = {"screen", "oa", "tech", "final", "offer"}
 # funnel stage-to-stage conversion.
 STAGE_ORDER = ["applied", "screen", "oa", "tech", "final", "offer"]
 TERMINAL_STAGES = {"rejected", "ghosted"}
+# Application.channel -> the coarse Application.source bucket the funnel
+# groups by, used when a quick-add only names the channel. Job boards are
+# "portal"; a company's own careers page is "direct". "other" defaults to
+# "direct" — correct it with an ingest upsert if it was really a referral.
+CHANNEL_DEFAULT_SOURCE = {
+    "linkedin_easy_apply": "portal",
+    "cutshort": "portal",
+    "naukri": "portal",
+    "careers_page": "direct",
+    "other": "direct",
+}
 
 # --- Correlations ---
 # Median deep-work split threshold (hours), per spec.
