@@ -5,8 +5,16 @@ and tests all import from here rather than hardcoding numbers.
 import datetime
 
 # --- Program dates ---
-PROGRAM_START = datetime.date(2026, 9, 7)   # Day 1, PROVE begins
-PROGRAM_END = datetime.date(2026, 12, 13)   # End of CONVERT / week 13 buffer
+# These two are independent constants, NOT one derived from the other —
+# changing PROGRAM_START alone does not move PROGRAM_END or the program's
+# length. Moved together 2026-09-11 (was 2026-09-07): both shifted by the
+# same +4 days so the length (97 days) is unchanged. Also: editing either
+# constant does NOT retroactively update rows 0002_seed_program already
+# wrote (Phase/Week start_date/end_date, the "Program end" Countdown) —
+# migrations run once. See migrations/0008_shift_program_dates.py, which
+# re-derives those rows from whatever these constants hold when it runs.
+PROGRAM_START = datetime.date(2026, 9, 11)   # Day 1, PROVE begins
+PROGRAM_END = datetime.date(2026, 12, 17)   # End of CONVERT / week 13 buffer
 PROGRAM_TOTAL_WEEKS = 13
 
 # --- Green day / streak ---
