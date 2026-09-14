@@ -83,15 +83,23 @@ TEMPLATES = [
 WSGI_APPLICATION = "ascend.wsgi.application"
 
 # --- Database (Neon Postgres) ---
-# CONN_MAX_AGE=0: short-lived connections are fine for a single-user app and
-# sidestep any pooling weirdness. ssl_require follows Neon's own requirement.
-# The direct (unpooled) connection string is required — psycopg3 issues
-# server-side PREPARE statements by default, which PgBouncer transaction
-# pooling (Neon's pooled endpoint) cannot support across requests.
+# Persistent connections (CONN_MAX_AGE). Render runs in Singapore and Neon in
+# us-east-2, so opening a TLS connection costs ~1.2-1.5s — most of every
+# request's time when each request opened its own (CONN_MAX_AGE=0; a warm
+# GET /api/health/ took ~1.7s). Each gunicorn thread now keeps its connection.
+# CONN_HEALTH_CHECKS runs a cheap SELECT 1 before reusing one, because Neon's
+# scale-to-zero closes idle connections after 5 minutes with no active
+# queries — a dead connection is replaced instead of 500ing the request. Idle
+# connections don't keep the compute awake, so this doesn't cost compute hours.
+# ssl_require follows Neon's own requirement. The direct (unpooled)
+# connection string is required — psycopg3 issues server-side PREPARE
+# statements by default, which PgBouncer transaction pooling (Neon's pooled
+# endpoint) cannot support across requests.
 DATABASES = {
     "default": dj_database_url.config(
         default=config("DATABASE_URL"),
-        conn_max_age=0,
+        conn_max_age=config("CONN_MAX_AGE", default=600, cast=int),
+        conn_health_checks=True,
         ssl_require=not DEBUG,
     )
 }
