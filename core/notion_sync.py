@@ -2,9 +2,11 @@
 Mirror of the user's Notion "Daily Board" database into NotionTask, pulled
 in by POST /api/sync/notion/ (core/views.py). Mostly one-directional:
 title/category/due_date are read-only mirrors. The one write path back to
-Notion is write_status_to_notion() — PATCH /api/notion-tasks/<id>/ pushes a
-status change onto the Notion page and updates the local row in the same
-request, so the board reflects it without waiting for the next cron sync.
+Notion is the status property — PATCH /api/notion-tasks/<id>/ (the /board
+drag) and checking a Notion-sourced row done on TODAY (PATCH
+/api/today/selections/<id>/) both push the change onto the Notion page and
+update the local row in the same request, so the board reflects it without
+waiting for the next cron sync.
 
 Mirrors core/ingest.py's shape: the view is a one-line call into
 sync_notion_tasks() / write_status_to_notion(); everything else here is
@@ -290,12 +292,37 @@ def build_status_patch(prop_name: str, prop_type: str, new_status: str) -> dict:
     return {"properties": {prop_name: {key: {"name": new_status}}}}
 
 
-def write_status_to_notion(task, new_status: str):
-    """Push `new_status` onto the Notion page backing `task`, then update the
-    local row. Validates against the board's real status options first — an
-    arbitrary string is a 400 (NotionStatusError), never written to Notion.
-    A Notion API failure raises NotionAPIError (502); the local row is only
-    touched after Notion confirms the write."""
+# Shared with core.views' pool filter — a status that reads as finished.
+DONE_LIKE_STATUS = re.compile(r"done|complete|shipped|closed|archived", re.IGNORECASE)
+
+
+def status_is_done_like(status) -> bool:
+    return bool(DONE_LIKE_STATUS.search(status or ""))
+
+
+def completed_status_option(prop_spec: dict):
+    """The option a finished task moves to, read from the board's own status
+    property spec — never a hardcoded name. A native "status" property files
+    its options under groups, so the first option in the "Complete" group
+    wins; a select (the live Daily Board's Status is one) has no groups, so
+    the first option whose name reads as done ("Completed") wins. None if the
+    board has no such option."""
+    options = _status_option_names(prop_spec)
+    if prop_spec.get("type") == "status":
+        container = prop_spec.get("status") or {}
+        names_by_id = {o.get("id"): o.get("name") for o in container.get("options") or []}
+        for group in container.get("groups") or []:
+            if DONE_LIKE_STATUS.search(group.get("name") or ""):
+                in_group = [names_by_id.get(i) for i in group.get("option_ids") or []]
+                in_group = [n for n in in_group if n]
+                if in_group:
+                    return next((n for n in in_group if status_is_done_like(n)), in_group[0])
+    return next((n for n in options if status_is_done_like(n)), None)
+
+
+def _load_status_property():
+    """(property name, property spec) of the board's status property, from a
+    live GET /v1/databases/{id}."""
     _require_notion_config()
 
     schema = _notion_get(f"/databases/{settings.NOTION_DAILY_BOARD_DB_ID}")
@@ -306,9 +333,10 @@ def write_status_to_notion(task, new_status: str):
             "This Notion board has no status-typed (or status-named select) "
             "property to write to."
         )
+    return status_prop_name, properties.get(status_prop_name, {})
 
-    prop_spec = properties.get(status_prop_name, {})
-    prop_type = prop_spec.get("type")
+
+def _push_status(task, status_prop_name, prop_spec, new_status):
     valid_options = _status_option_names(prop_spec)
     if new_status not in valid_options:
         raise NotionStatusError(
@@ -318,7 +346,7 @@ def write_status_to_notion(task, new_status: str):
 
     _notion_patch(
         f"/pages/{task.notion_page_id}",
-        build_status_patch(status_prop_name, prop_type, new_status),
+        build_status_patch(status_prop_name, prop_spec.get("type"), new_status),
     )
 
     now = timezone.now()
@@ -327,3 +355,32 @@ def write_status_to_notion(task, new_status: str):
     task.synced_at = now
     task.save()
     return task
+
+
+def write_status_to_notion(task, new_status: str):
+    """Push `new_status` onto the Notion page backing `task`, then update the
+    local row. Validates against the board's real status options first — an
+    arbitrary string is a 400 (NotionStatusError), never written to Notion.
+    A Notion API failure raises NotionAPIError (502); the local row is only
+    touched after Notion confirms the write."""
+    status_prop_name, prop_spec = _load_status_property()
+    return _push_status(task, status_prop_name, prop_spec, new_status)
+
+
+def complete_task_in_notion(task):
+    """Move `task` to the board's completed option — the same write path as
+    write_status_to_notion(), with the target read from the board instead of
+    the caller. Returns the status the task had before, or None when it
+    already read as done and nothing was written."""
+    if status_is_done_like(task.status):
+        return None
+    status_prop_name, prop_spec = _load_status_property()
+    target = completed_status_option(prop_spec)
+    if target is None:
+        raise NotionStatusError(
+            f"The board's {status_prop_name!r} property has no option that "
+            f"reads as completed. Options: {_status_option_names(prop_spec)}."
+        )
+    prior = task.status
+    _push_status(task, status_prop_name, prop_spec, target)
+    return prior

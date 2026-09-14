@@ -819,6 +819,10 @@ class TodaySelection(BaseModel):
     minutes_spent = models.PositiveIntegerField(null=True, blank=True)
     done = models.BooleanField(default=False)
     position = models.PositiveSmallIntegerField(default=0)
+    # Notion rows only: the board status this row's checkbox moved the Notion
+    # page away from when it was checked done, so unchecking can put it back.
+    # Blank when the check wrote nothing (not a Notion row, or already done).
+    notion_prior_status = models.CharField(max_length=100, blank=True, default="")
 
     objects = TodaySelectionQuerySet.as_manager()
 

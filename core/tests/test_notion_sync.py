@@ -412,3 +412,90 @@ class TestWriteBackEndpoint:
             f"/api/notion-tasks/{task.id}/", {"status": "Done"}, format="json"
         )
         assert resp.status_code == 401
+
+
+# --------------------------------------------------------------------------
+# Completing a task from TODAY — the target option comes from the board
+# --------------------------------------------------------------------------
+
+def _native_status_schema():
+    """A native "status" property: options filed under Notion's three groups."""
+    return _schema({
+        "Name": {"name": "Name", "type": "title", "title": {}},
+        "Status": {
+            "name": "Status",
+            "type": "status",
+            "status": {
+                "options": [
+                    {"id": "a", "name": "Not started"},
+                    {"id": "b", "name": "Doing"},
+                    {"id": "c", "name": "Shelved"},
+                    {"id": "d", "name": "Completed"},
+                ],
+                "groups": [
+                    {"name": "To-do", "option_ids": ["a"]},
+                    {"name": "In progress", "option_ids": ["b"]},
+                    {"name": "Complete", "option_ids": ["c", "d"]},
+                ],
+            },
+        },
+    })
+
+
+class TestCompletedStatusOption:
+    def test_select_board_picks_the_done_like_option(self):
+        props = _status_schema(
+            prop_type="select",
+            options=("To Do", "In Progress", "Completed", "Missed", "In-progress"),
+        )["properties"]
+        assert notion_sync.completed_status_option(props["Status"]) == "Completed"
+
+    def test_native_status_board_prefers_done_like_name_in_complete_group(self):
+        props = _native_status_schema()["properties"]
+        assert notion_sync.completed_status_option(props["Status"]) == "Completed"
+
+    def test_native_status_board_falls_back_to_first_in_complete_group(self):
+        schema = _native_status_schema()
+        schema["properties"]["Status"]["status"]["options"][3]["name"] = "Finished"
+        assert notion_sync.completed_status_option(schema["properties"]["Status"]) == "Shelved"
+
+    def test_no_done_like_option_is_none(self):
+        props = _status_schema(prop_type="select", options=("To Do", "Doing"))["properties"]
+        assert notion_sync.completed_status_option(props["Status"]) is None
+
+
+class TestCompleteTaskInNotion:
+    @patch("core.notion_sync._notion_patch")
+    @patch("core.notion_sync._notion_get")
+    def test_moves_task_to_completed_and_returns_prior(self, mock_get, mock_patch):
+        mock_get.return_value = _status_schema(
+            prop_type="select", options=("To Do", "In Progress", "Completed")
+        )
+        task = make_notion_task("page-1", status="In Progress")
+
+        prior = notion_sync.complete_task_in_notion(task)
+
+        assert prior == "In Progress"
+        path, body = mock_patch.call_args.args
+        assert path == "/pages/page-1"
+        assert body == {"properties": {"Status": {"select": {"name": "Completed"}}}}
+        assert NotionTask.objects.get(notion_page_id="page-1").status == "Completed"
+
+    @patch("core.notion_sync._notion_patch")
+    @patch("core.notion_sync._notion_get")
+    def test_already_done_task_writes_nothing(self, mock_get, mock_patch):
+        task = make_notion_task("page-1", status="Completed")
+
+        assert notion_sync.complete_task_in_notion(task) is None
+        mock_get.assert_not_called()
+        mock_patch.assert_not_called()
+
+    @patch("core.notion_sync._notion_patch")
+    @patch("core.notion_sync._notion_get")
+    def test_board_without_completed_option_is_400(self, mock_get, mock_patch):
+        mock_get.return_value = _status_schema(prop_type="select", options=("To Do", "Doing"))
+        task = make_notion_task("page-1", status="To Do")
+
+        with pytest.raises(notion_sync.NotionStatusError):
+            notion_sync.complete_task_in_notion(task)
+        mock_patch.assert_not_called()
