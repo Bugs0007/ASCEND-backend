@@ -1,8 +1,10 @@
 import datetime
+from unittest.mock import patch
 
 import pytest
 
-from core.models import DailyRecommendation, TodaySelection
+from core import notion_sync
+from core.models import DailyRecommendation, NotionTask, TodaySelection
 from core.tests.factories import (
     make_backlog_item,
     make_daily_log,
@@ -179,6 +181,151 @@ class TestSelections:
             [{"source_type": "adhoc", "title": "x"}],
             format="json",
         ).status_code in (401, 403)
+
+
+def _board_schema(options=("To Do", "In Progress", "Completed", "Missed")):
+    """The live Daily Board's shape: Status is a select, not a native status."""
+    return {
+        "object": "database",
+        "properties": {
+            "Task": {"name": "Task", "type": "title", "title": {}},
+            "Status": {
+                "name": "Status",
+                "type": "select",
+                "select": {"options": [{"name": n} for n in options]},
+            },
+        },
+    }
+
+
+@patch("core.notion_sync._notion_patch")
+@patch("core.notion_sync._notion_get")
+class TestSelectionDoneWritesBackToNotion:
+    """Checking a Notion-sourced TODAY row done completes the Notion page too
+    (the same write path as the /board drag); ASCEND-native rows stay local."""
+
+    @pytest.fixture(autouse=True)
+    def notion_configured(self, settings):
+        settings.NOTION_TOKEN = "fake-notion-token"
+        settings.NOTION_DAILY_BOARD_DB_ID = "fake-db-id"
+
+    def _notion_row(self, status="In Progress"):
+        task = make_notion_task("page-1", title="Apply to X", status=status)
+        row = make_today_selection(
+            datetime.date.today(), title=task.title, source_type="notion", source_id=task.id
+        )
+        return task, row
+
+    def _patch(self, client, row, body):
+        return client.patch(f"/api/today/selections/{row.id}/", body, format="json")
+
+    def test_done_completes_the_notion_page(self, mock_get, mock_patch, auth_client):
+        mock_get.return_value = _board_schema()
+        task, row = self._notion_row()
+
+        resp = self._patch(auth_client, row, {"done": True})
+
+        assert resp.status_code == 200
+        assert resp.data["done"] is True
+        path, body = mock_patch.call_args.args
+        assert path == "/pages/page-1"
+        assert body == {"properties": {"Status": {"select": {"name": "Completed"}}}}
+        task.refresh_from_db()
+        assert task.status == "Completed"  # the /board mirror row, no sync needed
+        assert task.status_changed_at is not None
+        row.refresh_from_db()
+        assert row.notion_prior_status == "In Progress"
+
+    def test_completed_task_leaves_the_planning_pool(self, mock_get, mock_patch, auth_client):
+        mock_get.return_value = _board_schema()
+        task, row = self._notion_row()
+
+        self._patch(auth_client, row, {"done": True})
+
+        pool = auth_client.get("/api/today/pool/").data["results"]
+        assert not [p for p in pool if p["source"] == "notion" and p["source_id"] == task.id]
+
+    def test_notion_failure_leaves_the_row_unchecked(self, mock_get, mock_patch, auth_client):
+        mock_get.return_value = _board_schema()
+        mock_patch.side_effect = notion_sync.NotionAPIError("Notion said no")
+        task, row = self._notion_row()
+
+        resp = self._patch(auth_client, row, {"done": True})
+
+        assert resp.status_code == 502
+        row.refresh_from_db()
+        assert row.done is False
+        assert NotionTask.objects.get(pk=task.pk).status == "In Progress"
+
+    def test_repeated_done_writes_once(self, mock_get, mock_patch, auth_client):
+        mock_get.return_value = _board_schema()
+        _, row = self._notion_row()
+
+        assert self._patch(auth_client, row, {"done": True}).status_code == 200
+        assert self._patch(auth_client, row, {"done": True}).status_code == 200
+        assert mock_patch.call_count == 1
+
+    def test_undo_restores_the_prior_status(self, mock_get, mock_patch, auth_client):
+        mock_get.return_value = _board_schema()
+        task, row = self._notion_row(status="To Do")
+        self._patch(auth_client, row, {"done": True})
+
+        resp = self._patch(auth_client, row, {"done": False})
+
+        assert resp.status_code == 200
+        _, body = mock_patch.call_args.args
+        assert body == {"properties": {"Status": {"select": {"name": "To Do"}}}}
+        task.refresh_from_db()
+        assert task.status == "To Do"
+        row.refresh_from_db()
+        assert row.done is False
+        assert row.notion_prior_status == ""
+
+    def test_undo_leaves_a_card_moved_on_the_board_alone(self, mock_get, mock_patch, auth_client):
+        mock_get.return_value = _board_schema()
+        task, row = self._notion_row()
+        self._patch(auth_client, row, {"done": True})
+        NotionTask.objects.filter(pk=task.pk).update(status="Missed")  # dragged on /board
+        mock_patch.reset_mock()
+
+        assert self._patch(auth_client, row, {"done": False}).status_code == 200
+
+        mock_patch.assert_not_called()
+        assert NotionTask.objects.get(pk=task.pk).status == "Missed"
+
+    def test_already_completed_task_writes_nothing(self, mock_get, mock_patch, auth_client):
+        _, row = self._notion_row(status="Completed")
+
+        assert self._patch(auth_client, row, {"done": True}).status_code == 200
+        assert self._patch(auth_client, row, {"done": False}).status_code == 200
+
+        mock_get.assert_not_called()
+        mock_patch.assert_not_called()
+
+    def test_ascend_native_rows_stay_local(self, mock_get, mock_patch, auth_client):
+        backlog = make_backlog_item(title="Study")
+        rows = [
+            make_today_selection(
+                datetime.date.today(), title="Study", source_type="backlog", source_id=backlog.id
+            ),
+            make_today_selection(datetime.date.today(), title="One-off"),
+        ]
+
+        for row in rows:
+            assert self._patch(auth_client, row, {"done": True}).status_code == 200
+            row.refresh_from_db()
+            assert row.done is True
+
+        mock_get.assert_not_called()
+        mock_patch.assert_not_called()
+
+    def test_minutes_only_patch_does_not_touch_notion(self, mock_get, mock_patch, auth_client):
+        _, row = self._notion_row()
+
+        assert self._patch(auth_client, row, {"minutes_spent": 30}).status_code == 200
+
+        mock_get.assert_not_called()
+        mock_patch.assert_not_called()
 
 
 class TestTodayViewShape:

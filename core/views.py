@@ -7,8 +7,6 @@ All API views. Two authentication code paths, deliberately separate:
     the same endpoints the scheduled Claude tasks read.
   * /api/health/ requires neither (cron-job.org keep-warm hits this).
 """
-import re
-
 import django_filters
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -221,11 +219,39 @@ def _date_param(request, name="date"):
 
 # Mirrors the frontend's grouping.ts isDoneLikeStatus() — a Notion row whose
 # status reads as finished is not "open" for planning.
-_DONE_LIKE_STATUS = re.compile(r"done|complete|shipped|closed|archived", re.IGNORECASE)
-
-
 def _notion_status_is_open(status):
-    return not _DONE_LIKE_STATUS.search(status or "")
+    return not notion_sync.status_is_done_like(status)
+
+
+def _sync_notion_status(row, done, user):
+    """Mirror a TodaySelection's done flip onto its Notion page, through the
+    same write path as the /board drag (notion_sync). Runs BEFORE the local
+    save: a Notion failure raises (502, or 400 for a board with no completed
+    option) and the checkbox stays as it was, rather than ASCEND and Notion
+    silently disagreeing. ASCEND-native rows (backlog / recommendation /
+    adhoc) have no Notion page and stay local-only."""
+    if row.source_type != TodaySelection.SourceType.NOTION or row.source_id is None:
+        return
+    task = _owned_or_shared(NotionTask.objects.all(), user).filter(pk=row.source_id).first()
+    if task is None:
+        return  # the mirror row is gone — nothing to write back to
+
+    if done:
+        prior = notion_sync.complete_task_in_notion(task)
+        if prior is not None:
+            row.notion_prior_status = prior
+        return
+
+    if not row.notion_prior_status:
+        return  # this checkbox never moved the Notion page, so don't undo it
+    # Undo only what the check did: a card moved off completed since (e.g.
+    # dragged on /board) is left where it is.
+    if notion_sync.status_is_done_like(task.status):
+        try:
+            notion_sync.write_status_to_notion(task, row.notion_prior_status)
+        except notion_sync.NotionStatusError:
+            pass  # that option was removed from the board — uncheck locally anyway
+    row.notion_prior_status = ""
 
 
 # --------------------------------------------------------------------------
@@ -888,7 +914,10 @@ class TodaySelectionsView(APIView):
 
 class TodaySelectionDetailView(APIView):
     """PATCH {minutes_spent?, done?} — update one row. DELETE — remove a
-    mis-added row. Human token only."""
+    mis-added row. Human token only.
+
+    Checking a Notion-sourced row done also completes the Notion page (and
+    unchecking puts back the status it had) — see _sync_notion_status()."""
 
     authentication_classes = [authentication.TokenAuthentication]
     permission_classes = [permissions.IsAuthenticated]
@@ -899,7 +928,12 @@ class TodaySelectionDetailView(APIView):
         )
         serializer = TodaySelectionPatchSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        for field, value in serializer.validated_data.items():
+        data = serializer.validated_data
+        # Only on a real transition, so a repeated PATCH (a retry after a
+        # timeout) never writes to Notion twice.
+        if "done" in data and data["done"] != row.done:
+            _sync_notion_status(row, data["done"], request.user)
+        for field, value in data.items():
             setattr(row, field, value)
         row.save()
         return Response(_serialize_today_selection(row))
