@@ -40,7 +40,8 @@ urlpatterns = [
     path("analytics/decay/", views.DecayView.as_view(), name="analytics-decay"),
     path("analytics/activity/", views.ActivityView.as_view(), name="analytics-activity"),
     path("analytics/observations/", views.ObservationsView.as_view(), name="analytics-observations"),
-    # --- Read endpoints (human token only) ---
+    # --- Read endpoints (human token only, except linkedin-snapshots and
+    # daily-logs, which also take the ingest token) ---
     path("applications/", views.ApplicationListView.as_view(), name="applications"),
     path("applications/<int:pk>/", views.ApplicationDetailView.as_view(), name="application-detail"),
     path("linkedin-snapshots/", views.LinkedInSnapshotListView.as_view(), name="linkedin-snapshots"),

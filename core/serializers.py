@@ -287,13 +287,25 @@ class ApplicationHeardBackPatchSerializer(StrictFieldsMixin, serializers.Seriali
 
 class LinkedInSnapshotWriteSerializer(StrictFieldsMixin, serializers.Serializer):
     """POST /api/linkedin-snapshots/ — upsert one day's numbers. `log_date`
-    defaults to today; re-posting a date overwrites that day's row."""
+    defaults to today; re-posting a date overwrites that day's row.
+
+    `post_impressions` / `post_likes` are optional: a day with no recent post
+    has neither. An explicit null means the same as omitting the key (an
+    automated caller building the body from a record with gaps sends null),
+    so the view never sees either — a new day gets 0, an existing day keeps
+    its stored value."""
 
     log_date = serializers.DateField(required=False)
-    post_impressions = serializers.IntegerField(min_value=0)
-    post_likes = serializers.IntegerField(min_value=0)
+    post_impressions = serializers.IntegerField(min_value=0, required=False, allow_null=True)
+    post_likes = serializers.IntegerField(min_value=0, required=False, allow_null=True)
     connections = serializers.IntegerField(min_value=0)
     note = serializers.CharField(required=False, allow_blank=True, max_length=200)
+
+    def validate(self, attrs):
+        for key in ("post_impressions", "post_likes"):
+            if attrs.get(key) is None:
+                attrs.pop(key, None)
+        return attrs
 
 
 class BlockEntryUndoSerializer(StrictFieldsMixin, serializers.Serializer):

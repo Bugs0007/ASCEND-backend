@@ -194,6 +194,7 @@ class TestLinkedInSnapshots:
         "patch",
         [
             {"post_impressions": -1},
+            {"post_likes": "lots"},  # optional is not the same as unvalidated
             {"connections": None},
             {"note": "x" * 201},
             {"likes": 3},  # unknown field
@@ -222,9 +223,92 @@ class TestLinkedInSnapshots:
         chrono = auth_client.get("/api/linkedin-snapshots/?ordering=log_date")
         assert [r["log_date"] for r in chrono.data["results"]] == ["2026-09-11", "2026-09-12", "2026-09-13"]
 
-    def test_requires_human_token(self, api_client, ingest_client):
+    def test_unauthenticated_is_401(self, api_client):
         assert api_client.get("/api/linkedin-snapshots/").status_code == 401
-        assert ingest_client.post("/api/linkedin-snapshots/", self.BODY).status_code in (401, 403)
+
+    def test_wrong_bearer_token_is_401(self, api_client):
+        api_client.credentials(HTTP_AUTHORIZATION="Bearer not-the-ingest-token")
+        assert api_client.get("/api/linkedin-snapshots/").status_code == 401
+        assert api_client.post("/api/linkedin-snapshots/", self.BODY).status_code == 401
+        assert LinkedInSnapshot.objects.count() == 0
+
+    # --- bearer INGEST_TOKEN (machine caller) ---
+    # auth_client and ingest_client share one function-scoped api_client, so
+    # a test must request only one of them or the last fixture's header wins.
+
+    def test_bearer_get_lists_snapshots(self, ingest_client):
+        LinkedInSnapshot.objects.create(
+            log_date=datetime.date(2026, 9, 11), post_impressions=1, post_likes=0, connections=480
+        )
+        resp = ingest_client.get("/api/linkedin-snapshots/")
+        assert resp.status_code == 200
+        assert [r["connections"] for r in resp.data["results"]] == [480]
+
+    def test_bearer_post_creates_snapshot(self, ingest_client, user):
+        resp = ingest_client.post("/api/linkedin-snapshots/", {**self.BODY, "log_date": "2026-09-14"})
+        assert resp.status_code == 201
+        row = LinkedInSnapshot.objects.get(pk=resp.data["id"])
+        assert row.log_date == datetime.date(2026, 9, 14)
+        assert (row.post_impressions, row.post_likes, row.connections) == (670, 30, 492)
+        assert row.note == "Café Cursor meetup post"
+        assert row.owner == user  # attributed to the ingest owner, not left ownerless
+
+    def test_bearer_second_post_for_same_log_date_updates_it(self, ingest_client):
+        first = ingest_client.post("/api/linkedin-snapshots/", {**self.BODY, "log_date": "2026-09-14"})
+        second = ingest_client.post(
+            "/api/linkedin-snapshots/",
+            {"log_date": "2026-09-14", "post_impressions": 900, "post_likes": 41, "connections": 495},
+        )
+        assert (first.status_code, second.status_code) == (201, 200)
+        assert second.data["id"] == first.data["id"]
+        rows = LinkedInSnapshot.objects.filter(log_date=datetime.date(2026, 9, 14))
+        assert rows.count() == 1
+        row = rows.get()
+        assert (row.post_impressions, row.post_likes, row.connections) == (900, 41, 495)
+
+    # --- post_impressions / post_likes are optional ---
+
+    @pytest.mark.parametrize(
+        "omit",
+        [("post_impressions",), ("post_likes",), ("post_impressions", "post_likes")],
+        ids=["no-impressions", "no-likes", "no-post-at-all"],
+    )
+    def test_impressions_and_likes_are_optional_on_a_new_day(self, ingest_client, omit):
+        body = {k: v for k, v in self.BODY.items() if k not in omit}
+        resp = ingest_client.post("/api/linkedin-snapshots/", body)
+        assert resp.status_code == 201  # not a 400
+        row = LinkedInSnapshot.objects.get(pk=resp.data["id"])
+        expected = {"post_impressions": 670, "post_likes": 30}
+        for key in ("post_impressions", "post_likes"):
+            assert getattr(row, key) == (0 if key in omit else expected[key])
+        assert row.connections == 492
+
+    def test_omitted_counts_keep_the_stored_values_on_update(self, ingest_client):
+        ingest_client.post("/api/linkedin-snapshots/", {**self.BODY, "log_date": "2026-09-14"})
+        resp = ingest_client.post("/api/linkedin-snapshots/", {"log_date": "2026-09-14", "connections": 495})
+        assert resp.status_code == 200
+        row = LinkedInSnapshot.objects.get(log_date=datetime.date(2026, 9, 14))
+        assert (row.post_impressions, row.post_likes, row.connections) == (670, 30, 495)
+
+    def test_null_counts_are_treated_as_omitted(self, ingest_client):
+        nulls = {"post_impressions": None, "post_likes": None}
+        new_day = ingest_client.post(
+            "/api/linkedin-snapshots/", {"log_date": "2026-09-15", "connections": 500, **nulls}
+        )
+        assert new_day.status_code == 201
+        assert (new_day.data["post_impressions"], new_day.data["post_likes"]) == (0, 0)
+
+        ingest_client.post("/api/linkedin-snapshots/", {**self.BODY, "log_date": "2026-09-14"})
+        existing_day = ingest_client.post(
+            "/api/linkedin-snapshots/", {"log_date": "2026-09-14", "connections": 495, **nulls}
+        )
+        assert existing_day.status_code == 200
+        assert (existing_day.data["post_impressions"], existing_day.data["post_likes"]) == (670, 30)
+
+    def test_connections_stays_required_for_bearer_posts(self, ingest_client):
+        resp = ingest_client.post("/api/linkedin-snapshots/", {"post_impressions": 5, "post_likes": 1})
+        assert resp.status_code == 400
+        assert "connections" in resp.data
 
 
 class TestIngestAcceptsNewApplicationFields:

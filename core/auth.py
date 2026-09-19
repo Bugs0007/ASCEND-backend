@@ -1,6 +1,7 @@
 """
-Machine-token authentication for the ingest API and the two dual-auth
-read endpoints (/api/today/, /api/email-queue/).
+Machine-token authentication for the ingest API and the dual-auth endpoints
+(/api/today/, /api/email-queue/, /api/daily-logs/, /api/linkedin-snapshots/,
+...) — core/views.py's header lists them all.
 
 This is a deliberately separate code path from the human's DRF
 TokenAuthentication: different credential (INGEST_TOKEN, not a per-user
