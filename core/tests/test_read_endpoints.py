@@ -17,11 +17,11 @@ from core.tests.factories import (
 
 pytestmark = pytest.mark.django_db
 
+# Human-token-only read lists.
 LIST_ENDPOINTS = [
     "/api/applications/",
     "/api/milestones/",
     "/api/sleep-logs/",
-    "/api/daily-logs/",
     "/api/skills/",
     "/api/courses/",
     "/api/cert-domains/",
@@ -30,16 +30,45 @@ LIST_ENDPOINTS = [
     "/api/notion-tasks/",
 ]
 
+# Read lists that also accept the machine (bearer INGEST_TOKEN) credential,
+# like /api/today/ and /api/email-queue/.
+DUAL_AUTH_LIST_ENDPOINTS = [
+    "/api/daily-logs/",
+    "/api/linkedin-snapshots/",
+]
+
 
 class TestReadEndpointsRequireAuth:
-    @pytest.mark.parametrize("path", LIST_ENDPOINTS)
+    @pytest.mark.parametrize("path", LIST_ENDPOINTS + DUAL_AUTH_LIST_ENDPOINTS)
     def test_unauthenticated_is_401(self, api_client, path):
         assert api_client.get(path).status_code == 401
 
     @pytest.mark.parametrize("path", LIST_ENDPOINTS)
     def test_machine_token_is_rejected(self, ingest_client, path):
-        # These are human-token-only, unlike /api/today/ and /api/email-queue/.
+        # These are human-token-only, unlike /api/today/, /api/email-queue/
+        # and the DUAL_AUTH_LIST_ENDPOINTS.
         assert ingest_client.get(path).status_code in (401, 403)
+
+
+class TestDualAuthReadEndpoints:
+    @pytest.mark.parametrize("path", DUAL_AUTH_LIST_ENDPOINTS)
+    def test_bearer_ingest_token_is_accepted(self, ingest_client, path):
+        assert ingest_client.get(path).status_code == 200
+
+    @pytest.mark.parametrize("path", DUAL_AUTH_LIST_ENDPOINTS)
+    def test_user_token_is_still_accepted(self, auth_client, path):
+        assert auth_client.get(path).status_code == 200
+
+    @pytest.mark.parametrize("path", DUAL_AUTH_LIST_ENDPOINTS)
+    def test_wrong_bearer_token_is_401(self, api_client, path):
+        api_client.credentials(HTTP_AUTHORIZATION="Bearer not-the-ingest-token")
+        assert api_client.get(path).status_code == 401
+
+    def test_daily_logs_with_bearer_token_returns_rows(self, ingest_client):
+        make_daily_log(datetime.date(2026, 9, 10))
+        resp = ingest_client.get("/api/daily-logs/?log_date__gte=2026-09-10&log_date__lte=2026-09-10")
+        assert resp.status_code == 200
+        assert [row["log_date"] for row in resp.data["results"]] == ["2026-09-10"]
 
 
 class TestOwnerScoping:

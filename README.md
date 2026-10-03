@@ -82,10 +82,11 @@ is a Postgres `ArrayField` — SQLite can't run the migrations.
 | `PATCH /api/block-entries/<id>/` | human token | Undo a block completion |
 | `PATCH /api/countdowns/<id>/` | human token | Set a countdown's target date (rejected if not `editable`) |
 | `GET /api/analytics/{rhythm,correlations,funnel,losses,burnup,certtrend,decay,activity,observations}/` | human token | Read-only computed analytics |
-| `GET /api/{applications,milestones,sleep-logs,daily-logs,skills,courses,cert-domains,content-posts,reflections,linkedin-snapshots}/` | human token | Read lists, filtered/ordered, owner-scoped |
+| `GET /api/{applications,milestones,sleep-logs,skills,courses,cert-domains,content-posts,reflections}/` | human token | Read lists, filtered/ordered, owner-scoped |
+| `GET /api/{daily-logs,linkedin-snapshots}/` | either | Read lists, filtered/ordered, owner-scoped |
 | `POST /api/applications/` | human token | Quick-add an application: company + role + channel, dated today |
 | `PATCH /api/applications/<id>/` | human token | Set the `heard_back` flag (pending / yes / no) |
-| `POST /api/linkedin-snapshots/` | human token | Log one day's LinkedIn impressions / likes / connections (upsert on date) |
+| `POST /api/linkedin-snapshots/` | either | Log one day's LinkedIn connections, plus impressions / likes when there's a recent post (upsert on date) |
 | `POST /api/sync/notion/` | machine token | Pull your Notion "Daily Board" into `NotionTask` — see [docs/NOTION_SYNC.md](docs/NOTION_SYNC.md) |
 | `GET /api/notion-tasks/` | human token | List the synced Notion rows |
 | `PATCH /api/notion-tasks/<id>/` | human token | Write a task's status back to Notion (validated against the board's real options) |

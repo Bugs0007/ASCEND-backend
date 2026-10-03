@@ -9,7 +9,11 @@ Authorization: Bearer <INGEST_TOKEN>
 This is a different code path from the human `TokenAuthentication` used by
 `/api/analytics/*` and the block-tap endpoints — a stray user token gets a
 401 here, and the ingest token gets a 401 on those (see
-[`core/auth.py`](../core/auth.py)). Rows written through ingest are
+[`core/auth.py`](../core/auth.py)). A few endpoints accept **either**
+credential because the frontend and the scheduled tasks share them:
+`/api/today/`, `/api/today/pool/`, `/api/today/recommendations/`,
+`/api/email-queue/`, `/api/daily-logs/` and `/api/linkedin-snapshots/`
+(`core/tests/test_auth_matrix.py` pins the full list). Rows written through ingest are
 attributed to the resolved **ingest owner** — `INGEST_OWNER_USERNAME` if
 set, else the first superuser — never left ownerless.
 
@@ -421,11 +425,14 @@ The live UI writes these; the machine path does not.
 
 ---
 
-## Read endpoints (your own user token only)
+## Read endpoints (your own user token)
 
-Everything below is **your login token** (`Authorization: Token <key>`),
-never `INGEST_TOKEN` — these are for a frontend/dashboard reading your own
-data, not the machine ingest path.
+Everything below takes **your login token** (`Authorization: Token <key>`) —
+these are for a frontend/dashboard reading your own data, not the machine
+ingest path, so `INGEST_TOKEN` gets a 401 on them. The exceptions are
+`GET /api/daily-logs/` and `GET`/`POST /api/linkedin-snapshots/`, which also
+accept `Authorization: Bearer $INGEST_TOKEN` so a scheduled task can read
+recent days and log a snapshot.
 
 | Endpoint | Filters | Ordering |
 |---|---|---|
@@ -465,11 +472,15 @@ is a 400 `"Already logged: …"`, never a second row. `201` with the row.
 `yes` / `no`). Only that field changes — not `stage`, not `last_update`, so
 the ghost rule is unaffected. Any other key is a 400.
 
-**`POST /api/linkedin-snapshots/`** — `{"post_impressions", "post_likes",
-"connections"}` (non-negative integers, all required), optional `note` (≤200
-chars) and `log_date` (defaults to today; future is a 400). Upserts on
-`log_date`: `201` for a new day, `200` when it overwrote that day's numbers
-(an omitted `note` keeps the stored one). Manual entry only — nothing
+**`POST /api/linkedin-snapshots/`** — `{"connections"}` (non-negative
+integer, required), optional `post_impressions` and `post_likes`
+(non-negative integers — a day with no recent post has neither), optional
+`note` (≤200 chars) and `log_date` (defaults to today; future is a 400).
+Upserts on `log_date`: `201` for a new day, `200` when it overwrote that
+day's numbers. Anything omitted keeps the stored value on an existing day
+(that goes for `note` too); on a new day an omitted `post_impressions` /
+`post_likes` is stored as `0`. An explicit `null` for either count means the
+same as omitting it. Takes either credential. Manual entry only — nothing
 fetches LinkedIn analytics.
 
 `GET /api/today/` also carries `applications_today` (rows with
@@ -483,6 +494,10 @@ curl -X POST "$BASE/api/applications/" -H "Authorization: Token $USER_TOKEN" \
 curl -X POST "$BASE/api/linkedin-snapshots/" -H "Authorization: Token $USER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"post_impressions": 670, "post_likes": 30, "connections": 492, "note": "Café Cursor meetup post"}'
+
+# a scheduled task, on a day with no recent post — only connections
+curl -X POST "$BASE/api/linkedin-snapshots/" -H "Authorization: Bearer $INGEST_TOKEN" \
+  -H "Content-Type: application/json" -d '{"connections": 492}'
 ```
 
 **`PATCH /api/countdowns/<id>/`** — `{"target_date": "2026-11-15"}` (or

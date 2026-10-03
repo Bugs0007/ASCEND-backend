@@ -23,6 +23,7 @@ check() {
     user)   auth_header=(-H "Authorization: Token $USER_TOKEN") ;;
     ingest) auth_header=(-H "Authorization: Bearer $INGEST_TOKEN") ;;
     none)   auth_header=() ;;
+    wrong-bearer) auth_header=(-H "Authorization: Bearer not-the-ingest-token") ;;
   esac
 
   local body_file
@@ -99,11 +100,42 @@ done
 
 echo
 echo "-- New read endpoints (user token only) --"
-for path in applications milestones sleep-logs daily-logs skills courses cert-domains content-posts reflections notion-tasks; do
+for path in applications milestones sleep-logs skills courses cert-domains content-posts reflections notion-tasks; do
   check "GET /api/$path/ with no token -> 401" 401 GET "/api/$path/" none
   check "GET /api/$path/" 200 GET "/api/$path/" user
   check "GET /api/$path/ with ingest token -> 401" 401 GET "/api/$path/" ingest
 done
+
+echo
+echo "-- Dual-auth read endpoints (user token or ingest token) --"
+for path in daily-logs linkedin-snapshots; do
+  check "GET /api/$path/ with no token -> 401" 401 GET "/api/$path/" none
+  check "GET /api/$path/ (user token)" 200 GET "/api/$path/" user
+  check "GET /api/$path/ (ingest token)" 200 GET "/api/$path/" ingest
+done
+check "GET /api/linkedin-snapshots/ with a wrong bearer token -> 401" 401 GET "/api/linkedin-snapshots/" wrong-bearer
+
+echo
+echo "-- LinkedIn snapshot POST with the ingest token (nothing is stored) --"
+# There is no DELETE endpoint, so a real POST would leave a permanent row on
+# the dashboard trend. A future log_date is rejected AFTER authentication and
+# field validation, so this proves — without writing — that:
+#   * the bearer token is accepted on POST (a 400, not a 401), and
+#   * post_impressions / post_likes are optional (the 400 names only log_date).
+check "POST /api/linkedin-snapshots/ with no token -> 401" 401 POST "/api/linkedin-snapshots/" none \
+  '{"connections": 1, "log_date": "2999-01-01"}'
+OPT_CODE=$(curl -s -o /tmp/li_optional_body -w "%{http_code}" -X POST "$BASE/api/linkedin-snapshots/" \
+  -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" \
+  -d '{"connections": 1, "log_date": "2999-01-01"}')
+if [ "$OPT_CODE" = "400" ] && grep -q "log_date" /tmp/li_optional_body \
+   && ! grep -Eq "post_impressions|post_likes" /tmp/li_optional_body; then
+  echo "  OK   [400] POST /api/linkedin-snapshots/ (ingest token) got past auth; only log_date rejected, impressions/likes optional"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL [$OPT_CODE, expected 400 naming only log_date] POST /api/linkedin-snapshots/ (ingest token) — $(head -c 300 /tmp/li_optional_body)"
+  FAIL=$((FAIL + 1))
+fi
+rm -f /tmp/li_optional_body
 
 echo
 echo "-- Notion status write-back (user token) --"

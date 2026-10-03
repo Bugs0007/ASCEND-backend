@@ -1,11 +1,17 @@
 """
 All API views. Two authentication code paths, deliberately separate:
 
-  * TokenAuthentication (human) guards analytics and the block-tap actions.
-  * IngestTokenAuthentication (machine) guards /api/ingest/*.
-  * /api/today/ and /api/email-queue/ accept either — the frontend polls
-    the same endpoints the scheduled Claude tasks read.
+  * TokenAuthentication (human) guards analytics, the block-tap actions and
+    the frontend's other read/write endpoints.
+  * IngestTokenAuthentication (machine) guards /api/ingest/* and
+    /api/sync/notion/.
+  * /api/today/ (+ pool, recommendations), /api/email-queue/,
+    /api/daily-logs/ and /api/linkedin-snapshots/ accept either — the
+    frontend polls the same endpoints the scheduled Claude tasks read/write.
   * /api/health/ requires neither (cron-job.org keep-warm hits this).
+
+core/tests/test_auth_matrix.py pins which auth each route accepts, so a view
+can't drift from this list without a test failing.
 """
 import django_filters
 from django.contrib.auth import get_user_model
@@ -447,6 +453,9 @@ class ObservationsView(AnalyticsAPIView):
 # and a real serializer_class gives drf-spectacular something worth
 # generating types from. Existing hand-rolled views are untouched.
 #
+# Exception: DailyLogListView and LinkedInSnapshotListView also accept the
+# ingest token (see their classes).
+#
 # Owner scoping: existing endpoints above (TodayView, EmailQueueView, every
 # analytics/* view) do NOT filter by owner at query time today — only new
 # rows get tagged with an owner on creation. These new endpoints DO filter,
@@ -550,6 +559,10 @@ class SleepLogListView(OwnerScopedListAPIView):
 
 
 class DailyLogListView(OwnerScopedListAPIView):
+    # Dual auth, like LinkedInSnapshotListView: scheduled tasks read recent
+    # days with the bearer INGEST_TOKEN.
+    authentication_classes = [authentication.TokenAuthentication, IngestTokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
     queryset = DailyLog.objects.all()
     serializer_class = DailyLogReadSerializer
     filterset_fields = {"log_date": ["gte", "lte"]}
@@ -601,8 +614,16 @@ class ContentPostListView(OwnerScopedListAPIView):
 class LinkedInSnapshotListView(OwnerScopedListAPIView):
     """GET — the manual LinkedIn snapshots, newest first (the dashboard trend
     asks for ?ordering=log_date). POST — upsert one day's numbers on
-    log_date: 201 when the day is new, 200 when it overwrote that day's row."""
+    log_date: 201 when the day is new, 200 when it overwrote that day's row.
+    post_impressions / post_likes are optional (a day with no recent post has
+    none): omitted on a new day they start at 0, omitted on an existing day
+    the stored value is kept.
+    Dual auth, unlike its human-token-only siblings above: a scheduled/
+    automated caller (e.g. a LinkedIn-analytics scraper) needs the same
+    bearer INGEST_TOKEN path as /api/today/ and /api/ingest/."""
 
+    authentication_classes = [authentication.TokenAuthentication, IngestTokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
     queryset = LinkedInSnapshot.objects.all()
     serializer_class = LinkedInSnapshotReadSerializer
     filterset_fields = {"log_date": ["gte", "lte"]}
@@ -619,8 +640,11 @@ class LinkedInSnapshotListView(OwnerScopedListAPIView):
         if log_date > today:
             raise DRFValidationError({"log_date": "Can't be in the future."})
 
+        # The model columns are NOT NULL, so a new day needs a value for the
+        # two optional counts even when the caller omitted them.
         snapshot, created = LinkedInSnapshot.objects.get_or_create(
-            log_date=log_date, defaults={"owner": request.user, **data}
+            log_date=log_date,
+            defaults={"owner": request.user, "post_impressions": 0, "post_likes": 0, **data},
         )
         if not created:
             for field, value in data.items():
